@@ -11,7 +11,7 @@ Unofficial. Not affiliated with T3 Tools. Linux AppImage only for now.
 - **Tokens per second** for the last response, with turn time and token details on hover. Claude rates are observed from the stream; Codex rates are labeled approximate.
 - **Cache rate** for the last turn.
 
-Toggle it under Settings, Stats for Nerds.
+Turn it on in Settings, General, **Stats for nerds**. It shows up in threads once a provider is signed in.
 
 ## How it works
 
@@ -26,7 +26,7 @@ Everything runs on your machine. Your AppImage and your T3 data are never modifi
 
 ## Install
 
-You need Linux, git, Node 24+ and about 3 GB of disk for the source and dependencies.
+You need Linux x86_64, git, Node 24+ and about 6 GB of disk for the source and dependencies.
 
 ```sh
 git clone https://github.com/btsouth/t3code-stats-bar
@@ -34,7 +34,7 @@ cd t3code-stats-bar
 ./t3code-stats-bar install
 ```
 
-The first build takes a few minutes. Then quit T3 Code fully and open **T3 Code (Stats Bar)** from your launcher.
+The first build downloads the source and dependencies and takes 5 to 15 minutes. Later builds are faster. Then quit T3 Code fully, open **T3 Code (Stats Bar)** from your launcher and turn on Stats for nerds.
 
 If your AppImage isn't in `~/Applications` or `~/Downloads`, pass it once: `./t3code-stats-bar install --appimage /path/to/T3-Code.AppImage`.
 
