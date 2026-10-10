@@ -599,9 +599,9 @@ def git_dirty_patches():
 
 
 def cmd_uninstall(args):
-    for path in (BIN, DESKTOP):
-        if path.is_symlink() or path.exists():
-            path.unlink()
+    if BIN.is_symlink() and BIN.resolve() == Path(__file__).resolve():
+        BIN.unlink()
+    DESKTOP.unlink(missing_ok=True)
     for folder in (DATA, CACHE, CONFIG):
         shutil.rmtree(folder, ignore_errors=True)
     say('Removed the launcher, builds and source cache. Your stock T3 Code and its data are untouched.')
