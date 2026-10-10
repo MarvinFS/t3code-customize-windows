@@ -1,0 +1,20 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Apply patches to their base and run the checks
+        run: ./t3code-stats-bar verify
+      - name: Show the log on failure
+        if: failure()
+        run: tail -n 200 ~/.cache/t3code-stats-bar/logs/*.log

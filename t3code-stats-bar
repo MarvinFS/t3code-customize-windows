@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+"""Rebuild your installed T3 Code AppImage with a stats bar under the composer.
+
+Everything runs on this machine: the patches in this repo are applied to the
+exact upstream commit your AppImage was built from, the web, server and desktop
+bundles are rebuilt, and the result is laid over a copy of your stock app.
+Your stock AppImage and its userdata are never modified.
+"""
+import argparse
+import copy
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import time
+
+REPO = Path(__file__).resolve().parent
+UPSTREAM = 'https://github.com/pingdotgg/t3code.git'
+HOME = Path.home()
+DATA = Path(os.environ.get('XDG_DATA_HOME') or HOME / '.local/share') / 't3code-stats-bar'
+CACHE = Path(os.environ.get('XDG_CACHE_HOME') or HOME / '.cache') / 't3code-stats-bar'
+CONFIG = Path(os.environ.get('XDG_CONFIG_HOME') or HOME / '.config') / 't3code-stats-bar'
+SOURCE = CACHE / 't3code'
+STATE = DATA / 'state.json'
+CURRENT = DATA / 'current'
+DISABLED = DATA / 'disabled'
+BIN = HOME / '.local/bin/t3code-stats-bar'
+DESKTOP = Path(os.environ.get('XDG_DATA_HOME') or HOME / '.local/share') / 'applications/t3code-stats-bar.desktop'
+SEARCH = ['Applications', 'Downloads', 'AppImages', 'Apps', '.local/bin', 'bin']
+AGENTS = {
+    'codex': ['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'],
+    'claude': ['claude', '-p', '--dangerously-skip-permissions'],
+}
+GIT_ENV = {'GIT_AUTHOR_NAME': 't3code-stats-bar', 'GIT_AUTHOR_EMAIL': 't3code-stats-bar@localhost',
+           'GIT_COMMITTER_NAME': 't3code-stats-bar', 'GIT_COMMITTER_EMAIL': 't3code-stats-bar@localhost',
+           'GIT_EDITOR': 'true', 'GIT_SEQUENCE_EDITOR': 'true'}
+# Strings that only exist in bundles built with the patches.
+MARKERS = (('apps/server/dist/client/', b'statsForNerds'), ('apps/server/dist/', b'claude_observed'),
+           ('apps/desktop/dist-electron/', b'statsForNerds'))
+
+
+class Stop(Exception):
+    """A clean stop with a message for the user."""
+
+
+class NeedsFix(Stop):
+    """The patches need porting to this upstream commit (conflict or failing check)."""
+
+
+def say(message):
+    print(message, flush=True)
+
+
+def run(args, cwd=None, env=None, log=None, check=True, capture=False):
+    result = subprocess.run(args, cwd=cwd, env=env, text=capture,
+                            stdout=subprocess.PIPE if capture else log,
+                            stderr=log if not capture else None)
+    if check and result.returncode:
+        raise Stop(f'Command failed ({result.returncode}): {" ".join(map(str, args))}' + (f'\nLog: {log.name}' if log else ''))
+    return result.stdout if capture else result
+
+
+def git(*args, check=True, capture=True, log=None):
+    env = {**os.environ, **GIT_ENV}
+    return run(['git', '-c', 'core.hooksPath=/dev/null', *args], cwd=SOURCE, env=env, check=check, capture=capture, log=log)
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as source:
+        for chunk in iter(lambda: source.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load(path, default=None):
+    return json.loads(path.read_text()) if path.exists() else default
+
+
+def save(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.new')
+    temporary.write_text(json.dumps(value, indent=2) + '\n')
+    os.replace(temporary, path)
+
+
+def patches():
+    return sorted((REPO / 'patches').glob('*.patch'))
+
+
+def recipe_hash():
+    digest = hashlib.sha256()
+    for path in patches() + [REPO / 'patches/base.txt', REPO / 'checks.json']:
+        digest.update(path.name.encode() + path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+# --- Finding the installed AppImage -------------------------------------------------
+
+def version_key(path):
+    return [int(part) if part.isdigit() else part for part in re.split(r'(\d+)', path.name)]
+
+
+def find_appimage(explicit=None):
+    if explicit:
+        path = Path(explicit).expanduser().resolve()
+        if not path.is_file():
+            raise Stop(f'No AppImage at {path}.')
+        return path
+    configured = load(CONFIG / 'config.json', {}).get('appimage')
+    if configured:
+        path = Path(configured)
+        if path.is_file():
+            return path.resolve()
+        # T3's updater replaces versioned files; look again in the same folder.
+        found = sorted((p for p in path.parent.glob('T3-Code*.AppImage') if p.is_file()), key=version_key)
+        if found:
+            return found[-1].resolve()
+    found = [p for folder in SEARCH for p in (HOME / folder).glob('T3-Code*.AppImage') if p.is_file()]
+    if not found:
+        raise Stop('Could not find a T3 Code AppImage in ~/' + ', ~/'.join(SEARCH) + '.\n'
+                   'Pass it once with --appimage /path/to/T3-Code-....AppImage')
+    return sorted(found, key=version_key)[-1].resolve()
+
+
+def fingerprint(path):
+    stat = path.stat()
+    return {'path': str(path), 'size': stat.st_size, 'mtime': stat.st_mtime_ns}
+
+
+# --- Electron asar archives ---------------------------------------------------------
+
+class Archive:
+    def __init__(self, path):
+        self.file = Path(path).open('rb')
+        _, header_size, _, json_size = struct.unpack('<4I', self.file.read(16))
+        self.offset = 8 + header_size
+        self.tree = json.loads(self.file.read(json_size))
+        self.entries = dict(self.walk(self.tree))
+
+    @staticmethod
+    def walk(tree, prefix=''):
+        for name, entry in tree.get('files', {}).items():
+            if 'files' in entry:
+                yield from Archive.walk(entry, prefix + name + '/')
+            else:
+                yield prefix + name, entry
+
+    def read(self, key):
+        entry = self.entries[key]
+        self.file.seek(self.offset + int(entry['offset']))
+        data = self.file.read(entry['size'])
+        if len(data) != entry['size']:
+            raise ValueError('Truncated archive entry: ' + key)
+        return data
+
+    def close(self):
+        self.file.close()
+
+
+def overlay(stock_path, output, build):
+    """Write stock_path with the server and desktop bundles replaced by build's, then verify it."""
+    stock = Archive(stock_path)
+    try:
+        tree = copy.deepcopy(stock.tree)
+
+        def node(path):
+            current = tree
+            for part in path.split('/'):
+                current = current['files'][part]
+            return current
+
+        node('apps/server/dist')['files']['client'] = {'files': {}}
+        overlays = {}
+        for prefix in ('apps/server/dist', 'apps/desktop/dist-electron'):
+            source = build / prefix
+            for path in sorted(source.rglob('*')):
+                if path.is_symlink():
+                    raise Stop('Unexpected symlink in the build output: ' + str(path))
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(source).as_posix()
+                current = node(prefix)
+                parts = relative.split('/')
+                for part in parts[:-1]:
+                    current = current['files'].setdefault(part, {'files': {}})
+                data = path.read_bytes()
+                block = 4194304
+                current['files'][parts[-1]] = {'size': len(data), 'integrity': {
+                    'algorithm': 'SHA256', 'hash': hashlib.sha256(data).hexdigest(), 'blockSize': block,
+                    'blocks': [hashlib.sha256(data[i:i + block]).hexdigest() for i in range(0, len(data), block)]}}
+                overlays[prefix + '/' + relative] = path
+        for required in ('apps/server/dist/bin.mjs', 'apps/server/dist/client/index.html',
+                         'apps/desktop/dist-electron/main.cjs'):
+            if required not in overlays:
+                raise Stop('The build did not produce ' + required)
+        records, cursor = [], 0
+        for key, entry in Archive.walk(tree):
+            if 'link' in entry or entry.get('unpacked'):
+                continue
+            entry['offset'] = str(cursor)
+            cursor += entry['size']
+            records.append(key)
+        encoded = json.dumps(tree, separators=(',', ':'), ensure_ascii=False).encode()
+        padded = encoded + b'\0' * ((-len(encoded)) % 4)
+        header = struct.pack('<II', 4 + len(padded), len(encoded)) + padded
+        with output.open('wb') as target:
+            target.write(struct.pack('<II', 4, len(header)))
+            target.write(header)
+            for key in records:
+                target.write(overlays[key].read_bytes() if key in overlays else stock.read(key))
+        patched = Archive(output)
+        try:
+            for key, path in overlays.items():
+                if patched.read(key) != path.read_bytes():
+                    raise Stop('Archive verification failed for ' + key)
+            for key, entry in stock.entries.items():
+                if key in overlays or key.startswith('apps/server/dist/client/'):
+                    continue
+                same = (entry == patched.entries.get(key) if entry.get('unpacked') or 'link' in entry
+                        else key in patched.entries and stock.read(key) == patched.read(key))
+                if not same:
+                    raise Stop('Archive verification failed for stock entry ' + key)
+            for prefix, marker in MARKERS:
+                if not any(marker in patched.read(k) for k in overlays if k.startswith(prefix) and k.endswith(('.js', '.mjs', '.cjs'))):
+                    raise Stop(f'The rebuilt bundle under {prefix} is missing the stats bar.')
+        finally:
+            patched.close()
+    finally:
+        stock.close()
+
+
+# --- Source checkout ----------------------------------------------------------------
+
+def rebase_in_progress():
+    gitdir = Path(git('rev-parse', '--absolute-git-dir').strip())
+    return (gitdir / 'rebase-merge').exists() or (gitdir / 'rebase-apply').exists()
+
+
+def has_commit(ref):
+    return git('cat-file', '-e', ref + '^{commit}', check=False, capture=False).returncode == 0
+
+
+def ensure_commit(commit, version, log):
+    if not SOURCE.exists():
+        say('Cloning T3 Code source (one time, history only)...')
+        SOURCE.parent.mkdir(parents=True, exist_ok=True)
+        run(['git', 'clone', '--filter=blob:none', '--no-checkout', UPSTREAM, str(SOURCE)], log=log)
+    if not has_commit(commit):
+        say('Fetching upstream...')
+        git('fetch', '--quiet', 'origin', capture=False, log=log, check=False)
+        if version and not has_commit(commit):
+            git('fetch', '--quiet', 'origin', 'tag', 'v' + version, capture=False, log=log, check=False)
+    if not has_commit(commit):
+        raise Stop(f'Upstream commit {commit} is not on GitHub yet. Try again later.')
+    return git('rev-parse', commit + '^{commit}').strip()
+
+
+def prepare(target, log, resume=False):
+    """Leave SOURCE with the patches as commits on top of target."""
+    base = (REPO / 'patches/base.txt').read_text().strip()
+    if resume:
+        if rebase_in_progress():
+            raise NeedsFix('A rebase is still in progress in ' + str(SOURCE) + '. Finish it (git rebase --continue) first.')
+    else:
+        if rebase_in_progress():
+            # Start over from the repo's patches; a fresh build never continues an old port.
+            git('am', '--abort', check=False, capture=False, log=log)
+            git('rebase', '--abort', check=False, capture=False, log=log)
+        say('Applying patches...')
+        git('checkout', '--quiet', '--force', '--detach', base, capture=False, log=log)
+        # Keep node_modules so dependency installs stay fast between builds.
+        git('clean', '-ffdxq', '-e', 'node_modules', capture=False, log=log)
+        if git('am', '--quiet', '--committer-date-is-author-date', *map(str, patches()), check=False, capture=False, log=log).returncode:
+            git('am', '--abort', check=False, capture=False, log=log)
+            raise Stop(f'The patches do not apply to their own base {base[:12]}. The repo checkout looks damaged; run git status in {REPO}.')
+        if base != target:
+            say('Rebasing onto your nightly...')
+            git('rebase', '--quiet', '--onto', target, base, check=False, capture=False, log=log)
+    if rebase_in_progress():
+        conflicted = git('diff', '--name-only', '--diff-filter=U').split()
+        raise NeedsFix('The patches conflict with this nightly in:\n' + '\n'.join('  ' + f for f in conflicted))
+    if git('status', '--porcelain', '--untracked-files=no').strip():
+        raise NeedsFix('The source checkout has uncommitted changes in ' + str(SOURCE) + '.')
+    if git('merge-base', '--is-ancestor', target, 'HEAD', check=False, capture=False).returncode:
+        raise NeedsFix('The patch commits are not on top of the nightly commit ' + target[:12] + '.')
+
+
+def node_env():
+    env = os.environ.copy()
+    env['PATH'] = str(SOURCE / 'node_modules/.bin') + os.pathsep + env['PATH']
+    for key in ('T3CODE_DESKTOP_DEV', 'VITE_HTTP_URL', 'VITE_WS_URL', 'NODE_ENV'):
+        env.pop(key, None)
+    return env
+
+
+def pnpm():
+    if shutil.which('pnpm'):
+        return ['pnpm']
+    manager = json.loads((SOURCE / 'package.json').read_text()).get('packageManager', 'pnpm')
+    return ['npx', '--yes', manager.split('+')[0]]
+
+
+def install(env, log):
+    say('Installing dependencies (first run takes a few minutes)...')
+    run([*pnpm(), 'install', '--frozen-lockfile'], cwd=SOURCE, env=env, log=log)
+
+
+def checks(env, log):
+    spec = json.loads((REPO / 'checks.json').read_text())
+    missing = [t for t in spec['tests'] if not (SOURCE / t).exists()]
+    if missing:
+        raise NeedsFix('Test files listed in checks.json no longer exist (moved upstream?):\n' + '\n'.join('  ' + t for t in missing))
+    say('Running the patch tests and typechecks...')
+    steps = [(['vp', 'test', 'run', *spec['tests']], 'Patch tests failed.')]
+    steps += [(['tsc', '--noEmit', '-p', p + '/tsconfig.json'], f'Typecheck failed in {p}.') for p in spec['typecheck']]
+    for args, message in steps:
+        if run(args, cwd=SOURCE, env=env, log=log, check=False).returncode:
+            raise NeedsFix(message + ' Command: ' + ' '.join(args))
+
+
+def build_bundles(env, version, stock_root, log):
+    say('Building web, server and desktop bundles...')
+    env = dict(env, APP_VERSION=version, TMPDIR=str(CACHE / 'tmp'))
+    Path(env['TMPDIR']).mkdir(parents=True, exist_ok=True)
+    # Optional: your own copy of upstream's public build config (see README).
+    extra = CONFIG / 'build.env'
+    if extra.exists():
+        for line in extra.read_text().splitlines():
+            if '=' in line and not line.lstrip().startswith('#'):
+                key, value = line.split('=', 1)
+                env[key.strip()] = value.strip().strip('"').strip("'")
+    packages = [SOURCE / 'apps' / app / 'package.json' for app in ('web', 'server', 'desktop')]
+    # The desktop build regenerates this tracked file; put the committed copy back afterwards.
+    generated = [SOURCE / 'apps/desktop/src/preview/AnnotationStyles.generated.ts']
+    originals = {path: path.read_bytes() for path in packages + generated if path.exists()}
+    try:
+        for path in packages:
+            package = json.loads(originals[path])
+            package['version'] = version
+            path.write_text(json.dumps(package, indent=2) + '\n')
+        run(['vp', 'build'], cwd=SOURCE / 'apps/web', env=env, log=log)
+        run(['node', 'scripts/cli.ts', 'build'], cwd=SOURCE / 'apps/server', env=env, log=log)
+        brand = 'nightly' if 'nightly' in version else 'production'
+        run(['node', 'scripts/apply-web-brand-assets.ts', brand, 'apps/server/dist/client'], cwd=SOURCE, env=env, log=log)
+        # Reuse the native helper from your own AppImage instead of compiling it.
+        helper = SOURCE / 'native/browser-secret/build/x64/t3-browser-secret'
+        stock_helper = stock_root / 'resources/browser-secret/t3-browser-secret'
+        if stock_helper.exists():
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(stock_helper, helper)
+            os.utime(helper, None)
+        run(['node', 'scripts/build-browser-secret.mjs'], cwd=SOURCE / 'apps/desktop', env=env, log=log)
+        run(['node', 'scripts/build-preview-annotation-css.mjs'], cwd=SOURCE / 'apps/desktop', env=env, log=log)
+        run(['vp', 'pack'], cwd=SOURCE / 'apps/desktop', env=env, log=log)
+    finally:
+        for path, original in originals.items():
+            path.write_bytes(original)
+
+
+def agent_fix(agent, problem, target, version, log):
+    prompt = (f'Follow {REPO}/AGENTS.md to port the T3 Code stats bar patches.\n\n'
+              f'Source checkout: {SOURCE}\nNightly: {version} at commit {target}\n'
+              f'Patch repo: {REPO}\n\nThe build stopped with:\n\n{problem}\n')
+    say(f'Handing the checkout to {agent}. This usually takes 10 to 30 minutes. Transcript: {log.name}')
+    log.write('\n--- agent prompt ---\n' + prompt + '\n')
+    log.flush()
+    result = subprocess.run(AGENTS[agent], cwd=SOURCE, input=prompt, text=True, stdout=log, stderr=log)
+    if result.returncode:
+        say(f'{agent} exited with {result.returncode}; checking what it left.')
+
+
+# --- Commands -----------------------------------------------------------------------
+
+def check_tools():
+    for tool in ('git', 'node'):
+        if not shutil.which(tool):
+            raise Stop(f'{tool} is required. Install it and run again.')
+    major = int(run(['node', '-p', 'process.versions.node.split(".")[0]'], capture=True).strip())
+    if major < 24:
+        raise Stop(f'Node 24 or newer is required (found {major}).')
+
+
+def cmd_build(args):
+    check_tools()
+    appimage = find_appimage(args.appimage)
+    if args.appimage:
+        save(CONFIG / 'config.json', {**load(CONFIG / 'config.json', {}), 'appimage': str(appimage)})
+    say('T3 Code: ' + str(appimage))
+    state = load(STATE, {})
+    recipe = recipe_hash()
+    if (not args.force and state.get('stock') == fingerprint(appimage) and state.get('recipe') == recipe
+            and (CURRENT / 'AppRun').exists()):
+        say('Already built for this version. Launch with: t3code-stats-bar launch')
+        return
+    DATA.mkdir(parents=True, exist_ok=True)
+    logs = CACHE / 'logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    job = CACHE / 'work' / time.strftime('%Y%m%d-%H%M%S')
+    job.mkdir(parents=True)
+    with (logs / (job.name + '.log')).open('w') as log:
+        say('Log: ' + log.name)
+        say('Extracting your AppImage...')
+        run([str(appimage), '--appimage-extract'], cwd=job, log=log)
+        stock_root = job / 'squashfs-root'
+        archive = Archive(stock_root / 'resources/app.asar')
+        try:
+            metadata = json.loads(archive.read('package.json'))
+        finally:
+            archive.close()
+        version, commit = metadata['version'], metadata.get('t3codeCommitHash', '')
+        if not re.fullmatch(r'[0-9a-f]{7,40}', commit):
+            raise Stop('This AppImage does not record its source commit, so it cannot be rebuilt exactly.')
+        say(f'Version {version}, upstream commit {commit[:12]}')
+        target = ensure_commit(commit, version, log)
+        env = node_env()
+        attempts = 2 if args.fix else 0
+        resume = ported = args.resume
+        while True:
+            try:
+                prepare(target, log, resume=resume)
+                install(env, log)
+                if not args.skip_checks:
+                    checks(env, log)
+                break
+            except NeedsFix as problem:
+                if attempts == 0:
+                    raise NeedsFix(f'{problem}\n\nThe patches need porting to this nightly. Either:\n'
+                                   f'  - ask your coding agent to follow {REPO}/AGENTS.md, then run: t3code-stats-bar build --resume\n'
+                                   f'  - or let it run unattended: t3code-stats-bar build --fix codex  (or --fix claude)\n'
+                                   f'  - or wait for the repo to catch up: t3code-stats-bar update\n'
+                                   f'Your stock T3 Code is untouched and still launches.')
+                attempts -= 1
+                say(str(problem))
+                agent_fix(args.fix, str(problem), target, version, log)
+                resume = ported = True
+        head = git('rev-parse', 'HEAD').strip()
+        build_bundles(env, version, stock_root, log)
+        if git('rev-parse', 'HEAD').strip() != head:
+            raise Stop('The source checkout changed during the build.')
+        say('Writing and verifying the patched app...')
+        output = job / 'app.asar'
+        overlay(stock_root / 'resources/app.asar', output, SOURCE)
+        shutil.move(str(output), stock_root / 'resources/app.asar')
+        if ported:
+            export_patches(target)
+        destination = DATA / 'builds' / f'{version}-{recipe}-{job.name}'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(stock_root), destination)
+        link = DATA / 'current.new'
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to(destination.relative_to(DATA))
+        os.replace(link, CURRENT)
+        save(STATE, {'stock': fingerprint(appimage), 'version': version, 'commit': target, 'recipe': recipe_hash(),
+                     'build': str(destination), 'builtAt': time.strftime('%Y-%m-%dT%H:%M:%S')})
+        icon = destination / 't3code.png'
+        if icon.exists():
+            shutil.copy2(icon, DATA / 'icon.png')
+        prune()
+    shutil.rmtree(job, ignore_errors=True)
+    say(f'\nReady: stats bar build for {version}.')
+    if DISABLED.exists():
+        say('The stats bar is switched off. Run t3code-stats-bar on to use it.')
+    if not DESKTOP.exists():
+        say('Run t3code-stats-bar install to add the launcher, or start it now with t3code-stats-bar launch.')
+    else:
+        say('Quit T3 Code fully and reopen it from "T3 Code (Stats Bar)".')
+
+
+def export_patches(target):
+    """Keep a port that an agent or you finished, so the next build starts from it."""
+    out = REPO / 'patches'
+    for path in patches():
+        path.unlink()
+    git('format-patch', '--quiet', '--no-signature', '--zero-commit', '-o', str(out), target + '..HEAD', capture=False)
+    (out / 'base.txt').write_text(target + '\n')
+    say(f'Saved the ported patches to {out}.')
+
+
+def prune(keep=3):
+    """Drop old builds, keeping the newest few so a running instance never loses its files."""
+    current = CURRENT.resolve()
+    builds = sorted((DATA / 'builds').iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in builds[keep:]:
+        if old.resolve() != current:
+            shutil.rmtree(old, ignore_errors=True)
+
+
+def cmd_verify(args):
+    """Apply the patches to their base and run the checks. No AppImage needed (used by CI)."""
+    check_tools()
+    logs = CACHE / 'logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    base = (REPO / 'patches/base.txt').read_text().strip()
+    with (logs / ('verify-' + time.strftime('%Y%m%d-%H%M%S') + '.log')).open('w') as log:
+        say('Log: ' + log.name)
+        target = ensure_commit(base, None, log)
+        prepare(target, log)
+        env = node_env()
+        install(env, log)
+        checks(env, log)
+    say('Patches apply and pass their checks on ' + base[:12] + '.')
+
+
+def launch_target():
+    """The patched build if it was made from the AppImage installed right now, else stock."""
+    appimage = find_appimage()
+    state = load(STATE, {})
+    built = CURRENT / 'AppRun'
+    if DISABLED.exists() or not built.exists():
+        return appimage, None
+    if state.get('stock') != fingerprint(appimage):
+        return appimage, 'T3 Code updated. Run "t3code-stats-bar update" to bring the stats bar back.'
+    return built.resolve(), None
+
+
+def cmd_launch(args):
+    appimage = find_appimage()
+    target, notice = launch_target()
+    if notice:
+        say(notice)
+        if shutil.which('notify-send'):
+            subprocess.run(['notify-send', '-a', 'T3 Code', 'Stats bar is off for this version', notice], check=False)
+    if target != appimage:
+        # Run the extracted copy as if it were the AppImage, so T3's own updater still updates the real file.
+        os.environ['APPIMAGE'] = str(appimage)
+        os.environ['APPDIR'] = str(target.parent)
+    os.execv(str(target), [str(target), *args.rest])
+
+
+def cmd_status(args):
+    appimage = find_appimage()
+    state = load(STATE, {})
+    target, notice = launch_target()
+    say('Installed AppImage: ' + str(appimage))
+    say('Stats bar build:    ' + (f"{state['version']} ({state['builtAt']})" if state else 'none yet'))
+    say('Switched:           ' + ('off' if DISABLED.exists() else 'on'))
+    say('Next launch runs:   ' + ('stats bar build' if target != appimage else 'stock T3 Code'))
+    if notice:
+        say(notice)
+    if state and state.get('recipe') != recipe_hash():
+        say('The patches changed since the last build. Run t3code-stats-bar build.')
+
+
+def cmd_on(args):
+    DISABLED.unlink(missing_ok=True)
+    say('Stats bar on. Quit T3 Code fully and reopen it.')
+
+
+def cmd_off(args):
+    DATA.mkdir(parents=True, exist_ok=True)
+    DISABLED.touch()
+    say('Stock T3 Code on the next launch. Quit it fully and reopen it.')
+
+
+def cmd_install(args):
+    BIN.parent.mkdir(parents=True, exist_ok=True)
+    if BIN.is_symlink() or not BIN.exists():
+        BIN.unlink(missing_ok=True)
+        BIN.symlink_to(Path(__file__).resolve())
+    DESKTOP.parent.mkdir(parents=True, exist_ok=True)
+    DESKTOP.write_text('\n'.join([
+        '[Desktop Entry]', 'Type=Application', 'Name=T3 Code (Stats Bar)',
+        'Comment=T3 Code with a stats bar under the composer',
+        f'Exec="{BIN}" launch %U', f'Icon={DATA / "icon.png"}', 'Terminal=false',
+        'StartupWMClass=com.t3tools.T3Code', 'Categories=Development;', '']))
+    if shutil.which('update-desktop-database'):
+        subprocess.run(['update-desktop-database', str(DESKTOP.parent)], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    say(f'Installed {BIN} and the "T3 Code (Stats Bar)" launcher.')
+    if str(BIN.parent) not in os.environ.get('PATH', '').split(os.pathsep):
+        say(f'Note: {BIN.parent} is not on your PATH.')
+    cmd_build(args)
+
+
+def cmd_update(args):
+    if git_dirty_patches():
+        backup = DATA / ('patches.bak-' + time.strftime('%Y%m%d-%H%M%S'))
+        shutil.copytree(REPO / 'patches', backup)
+        subprocess.run(['git', 'checkout', '--', 'patches', 'checks.json'], cwd=REPO, check=True)
+        say(f'Your local patch changes were saved to {backup}.')
+    say('Pulling the latest patches...')
+    if subprocess.run(['git', 'pull', '--ff-only', '--quiet'], cwd=REPO).returncode:
+        raise Stop(f'git pull failed in {REPO}. Resolve it there and run again.')
+    cmd_build(args)
+
+
+def git_dirty_patches():
+    status = subprocess.run(['git', 'status', '--porcelain', '--', 'patches', 'checks.json'],
+                            cwd=REPO, capture_output=True, text=True).stdout
+    return bool(status.strip())
+
+
+def cmd_uninstall(args):
+    for path in (BIN, DESKTOP):
+        if path.is_symlink() or path.exists():
+            path.unlink()
+    for folder in (DATA, CACHE, CONFIG):
+        shutil.rmtree(folder, ignore_errors=True)
+    say('Removed the launcher, builds and source cache. Your stock T3 Code and its data are untouched.')
+
+
+def main():
+    parser = argparse.ArgumentParser(prog='t3code-stats-bar', description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest='command')
+
+    def build_options(p):
+        p.add_argument('--appimage', help='path to your T3 Code AppImage (remembered)')
+        p.add_argument('--fix', choices=sorted(AGENTS), help='if the patches need porting, let this agent CLI do it unattended')
+        p.add_argument('--resume', action='store_true', help='continue from the checkout as you or your agent left it')
+        p.add_argument('--skip-checks', action='store_true', help='skip the patch tests and typechecks')
+        p.add_argument('--force', action='store_true', help='rebuild even if nothing changed')
+
+    for name, help_text in (('install', 'add the command and app launcher, then build'),
+                            ('build', 'build for the installed AppImage (the default)'),
+                            ('update', 'git pull the latest patches, then build')):
+        build_options(sub.add_parser(name, help=help_text))
+    launch = sub.add_parser('launch', help='start T3 Code: the stats bar build if current, else stock')
+    launch.add_argument('rest', nargs=argparse.REMAINDER)
+    sub.add_parser('status', help='show what the next launch will run')
+    sub.add_parser('on', help='use the stats bar build')
+    sub.add_parser('off', help='go back to stock T3 Code')
+    sub.add_parser('verify', help='apply the patches to their base and run the checks (no AppImage needed)')
+    sub.add_parser('uninstall', help='remove the launcher, builds and caches')
+    args = parser.parse_args(sys.argv[1:] or ['build'])
+    if args.command is None:
+        args = parser.parse_args(['build', *sys.argv[1:]])
+    handler = globals()['cmd_' + args.command]
+    if args.command in ('launch', 'status', 'on', 'off'):
+        return handler(args)
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with (CACHE / 'lock').open('w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Stop('Another t3code-stats-bar build is already running.')
+        handler(args)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Stop as stop:
+        print(f'\n{stop}', file=sys.stderr)
+        sys.exit(3 if isinstance(stop, NeedsFix) else 1)
+    except KeyboardInterrupt:
+        sys.exit(130)
