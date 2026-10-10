@@ -16,9 +16,9 @@ Subject: [PATCH 1/3] Stats for Nerds: response throughput and the composer
  .../orchestration-v2/ProjectionStore.test.ts  |  37 +-
  .../src/orchestration-v2/ProjectionStore.ts   |   6 +-
  apps/web/src/components/ChatView.tsx          |  39 +-
- .../chat/ComposerStats.logic.test.ts          | 430 ++++++++++++++
- .../components/chat/ComposerStats.logic.ts    | 240 ++++++++
- .../web/src/components/chat/ComposerStats.tsx | 540 ++++++++++++++++++
+ .../chat/ComposerStats.logic.test.ts          | 439 ++++++++++++++
+ .../components/chat/ComposerStats.logic.ts    | 250 ++++++++
+ .../web/src/components/chat/ComposerStats.tsx | 541 ++++++++++++++++++
  .../components/settings/SettingsPanels.tsx    |  31 +
  .../src/components/settings/settingsSearch.ts |   6 +
  .../state/orchestrationV2Projection.test.ts   |  13 +
@@ -26,7 +26,7 @@ Subject: [PATCH 1/3] Stats for Nerds: response throughput and the composer
  .../contracts/src/orchestrationV2.test.ts     |  71 +++
  packages/contracts/src/orchestrationV2.ts     |  10 +
  packages/contracts/src/settings.ts            |   2 +
- 21 files changed, 2733 insertions(+), 47 deletions(-)
+ 21 files changed, 2753 insertions(+), 47 deletions(-)
  create mode 100644 apps/server/src/orchestration-v2/Adapters/ClaudeResponseThroughput.test.ts
  create mode 100644 apps/server/src/orchestration-v2/Adapters/ClaudeResponseThroughput.ts
  create mode 100644 apps/server/src/orchestration-v2/Adapters/CodexResponseThroughput.test.ts
@@ -1869,10 +1869,10 @@ index d2ec0af4e..968531736 100644
                </div>
 diff --git a/apps/web/src/components/chat/ComposerStats.logic.test.ts b/apps/web/src/components/chat/ComposerStats.logic.test.ts
 new file mode 100644
-index 000000000..7931163b7
+index 000000000..479e94b19
 --- /dev/null
 +++ b/apps/web/src/components/chat/ComposerStats.logic.test.ts
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,439 @@
 +import {
 +  NodeId,
 +  ProviderDriverKind,
@@ -1891,6 +1891,7 @@ index 000000000..7931163b7
 +  composerLimitsFreshness,
 +  deriveResponseRate,
 +  deriveTurnCachePercentage,
++  formatCachePercentage,
 +  deriveTurnElapsedMs,
 +  selectComposerLimitWindows,
 +  selectComposerStatsTurns,
@@ -1984,6 +1985,14 @@ index 000000000..7931163b7
 +      deriveTurnCachePercentage({ ...usage, usageStatus: "unavailable", cachedInputTokens: 100 }),
 +    ).toBeNull();
 +    expect(deriveTurnCachePercentage(undefined)).toBeNull();
++  });
++
++  it("shows cache rates to one decimal without rounding up to 100%", () => {
++    expect(formatCachePercentage((998 / 1000) * 100)).toBe("99.8%");
++    expect(formatCachePercentage((9996 / 10000) * 100)).toBe("99.9%");
++    expect(formatCachePercentage(100)).toBe("100%");
++    expect(formatCachePercentage((873 / 1000) * 100)).toBe("87.3%");
++    expect(formatCachePercentage(0)).toBe("0%");
 +  });
 +});
 +
@@ -2305,10 +2314,10 @@ index 000000000..7931163b7
 +});
 diff --git a/apps/web/src/components/chat/ComposerStats.logic.ts b/apps/web/src/components/chat/ComposerStats.logic.ts
 new file mode 100644
-index 000000000..fb93ce1f9
+index 000000000..b4f72291f
 --- /dev/null
 +++ b/apps/web/src/components/chat/ComposerStats.logic.ts
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,250 @@
 +import type {
 +  OrchestrationV2ProviderTurn,
 +  OrchestrationV2ThreadProjection,
@@ -2354,6 +2363,16 @@ index 000000000..fb93ce1f9
 +    return null;
 +  }
 +  return (usage.cachedInputTokens / usage.inputTokens) * 100;
++}
++
++/**
++ * One decimal, truncated: 99.96% reads 99.9%, so 100% means every input token was cached.
++ * The epsilon keeps exact tenths (99.8) from flooring to the tenth below.
++ */
++export function formatCachePercentage(percentage: number): string {
++  if (percentage >= 100) return "100%";
++  if (percentage <= 0) return "0%";
++  return `${(Math.floor(percentage * 10 + 1e-9) / 10).toFixed(1)}%`;
 +}
 +
 +/** Wall time includes tools and waits. It must never be used as generation time for TPS. */
@@ -2551,10 +2570,10 @@ index 000000000..fb93ce1f9
 +}
 diff --git a/apps/web/src/components/chat/ComposerStats.tsx b/apps/web/src/components/chat/ComposerStats.tsx
 new file mode 100644
-index 000000000..05f5a3c88
+index 000000000..025f57253
 --- /dev/null
 +++ b/apps/web/src/components/chat/ComposerStats.tsx
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,541 @@
 +import type {
 +  OrchestrationV2ProviderTurn,
 +  OrchestrationV2TurnItem,
@@ -2577,6 +2596,7 @@ index 000000000..05f5a3c88
 +  composerLimitsFreshness,
 +  deriveResponseRate,
 +  deriveTurnCachePercentage,
++  formatCachePercentage,
 +  deriveTurnElapsedMs,
 +  selectComposerLimitWindows,
 +} from "./ComposerStats.logic";
@@ -2952,7 +2972,7 @@ index 000000000..05f5a3c88
 +              />
 +            }
 +          >
-+            <Value>{Math.round(cachePercentage)}%</Value>
++            <Value>{formatCachePercentage(cachePercentage)}</Value>
 +            <Label>cached</Label>
 +          </TooltipTrigger>
 +          <TooltipPopup>

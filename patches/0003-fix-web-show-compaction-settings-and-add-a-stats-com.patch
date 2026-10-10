@@ -98,7 +98,7 @@ index 968531736..ae2e04af5 100644
                          aria-hidden
                          className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
 diff --git a/apps/web/src/components/chat/ComposerStats.logic.test.ts b/apps/web/src/components/chat/ComposerStats.logic.test.ts
-index 7931163b7..fc10e8d40 100644
+index 479e94b19..79b01fd80 100644
 --- a/apps/web/src/components/chat/ComposerStats.logic.test.ts
 +++ b/apps/web/src/components/chat/ComposerStats.logic.test.ts
 @@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
@@ -108,8 +108,8 @@ index 7931163b7..fc10e8d40 100644
 +  deriveContextCompaction,
    deriveResponseRate,
    deriveTurnCachePercentage,
-   deriveTurnElapsedMs,
-@@ -428,3 +429,98 @@ describe("composer limit display", () => {
+   formatCachePercentage,
+@@ -437,3 +438,98 @@ describe("composer limit display", () => {
      expect(display.dimmed).toBe(true);
    });
  });
@@ -209,7 +209,7 @@ index 7931163b7..fc10e8d40 100644
 +  });
 +});
 diff --git a/apps/web/src/components/chat/ComposerStats.logic.ts b/apps/web/src/components/chat/ComposerStats.logic.ts
-index fb93ce1f9..2750bc6d9 100644
+index b4f72291f..8c8236a63 100644
 --- a/apps/web/src/components/chat/ComposerStats.logic.ts
 +++ b/apps/web/src/components/chat/ComposerStats.logic.ts
 @@ -7,6 +7,7 @@ import type {
@@ -220,7 +220,7 @@ index fb93ce1f9..2750bc6d9 100644
  
  /** Provider turn ordinals are scoped to a provider thread; children have their own nodes. */
  export function selectComposerStatsTurns(projection: {
-@@ -238,3 +239,54 @@ export function composerLimitDisplay(
+@@ -248,3 +249,54 @@ export function composerLimitDisplay(
      dimmed: freshness.status !== "fresh",
    };
  }
@@ -276,7 +276,7 @@ index fb93ce1f9..2750bc6d9 100644
 +  return { threshold, source, remainingTokens, thresholdPercentage, pressurePercentage, status };
 +}
 diff --git a/apps/web/src/components/chat/ComposerStats.tsx b/apps/web/src/components/chat/ComposerStats.tsx
-index 05f5a3c88..58788c7b6 100644
+index 025f57253..53b81a83a 100644
 --- a/apps/web/src/components/chat/ComposerStats.tsx
 +++ b/apps/web/src/components/chat/ComposerStats.tsx
 @@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
@@ -294,8 +294,8 @@ index 05f5a3c88..58788c7b6 100644
 +  deriveContextCompaction,
    deriveResponseRate,
    deriveTurnCachePercentage,
-   deriveTurnElapsedMs,
-@@ -233,7 +235,7 @@ function UsageLimitsSummary({
+   formatCachePercentage,
+@@ -234,7 +236,7 @@ function UsageLimitsSummary({
            <button
              type="button"
              aria-label="Usage limit details"
@@ -304,7 +304,7 @@ index 05f5a3c88..58788c7b6 100644
            />
          }
        >
-@@ -277,12 +279,25 @@ export function ComposerStats({
+@@ -278,12 +280,25 @@ export function ComposerStats({
    turn,
    compactions,
    usageLimits,
@@ -330,7 +330,7 @@ index 05f5a3c88..58788c7b6 100644
    const responseRate = deriveResponseRate(turn);
    const estimated = turn?.responseThroughput?.basis === "codex_active_windows_estimate";
    const usage = turn?.turnTokenUsage;
-@@ -300,7 +315,8 @@ export function ComposerStats({
+@@ -301,7 +316,8 @@ export function ComposerStats({
      !hasTokens &&
      responseRate === null &&
      compactions.length === 0 &&
@@ -340,7 +340,7 @@ index 05f5a3c88..58788c7b6 100644
    )
      return null;
    const count = (value: number | undefined) =>
-@@ -326,7 +342,7 @@ export function ComposerStats({
+@@ -327,7 +343,7 @@ export function ComposerStats({
                <button
                  type="button"
                  aria-label="Turn token details"
@@ -349,7 +349,7 @@ index 05f5a3c88..58788c7b6 100644
                />
              }
            >
-@@ -391,7 +407,7 @@ export function ComposerStats({
+@@ -392,7 +408,7 @@ export function ComposerStats({
              render={
                <span
                  tabIndex={0}
@@ -358,7 +358,7 @@ index 05f5a3c88..58788c7b6 100644
                />
              }
            >
-@@ -409,7 +425,7 @@ export function ComposerStats({
+@@ -410,7 +426,7 @@ export function ComposerStats({
    }
  
    // Context is per thread, so it sits with the turn stats; the left side is account limits.
@@ -367,7 +367,7 @@ index 05f5a3c88..58788c7b6 100644
      stats.unshift({
        key: "context",
        node: (
-@@ -422,13 +438,13 @@ export function ComposerStats({
+@@ -423,13 +439,13 @@ export function ComposerStats({
                <button
                  type="button"
                  aria-label="Context usage details"
@@ -383,7 +383,7 @@ index 05f5a3c88..58788c7b6 100644
                    {Math.round(context.usedPercentage)}%
                  </span>
                ) : (
-@@ -443,7 +459,7 @@ export function ComposerStats({
+@@ -444,7 +460,7 @@ export function ComposerStats({
                  <h3 className="font-medium">Context usage</h3>
                  <span className="text-muted-foreground tabular-nums">
                    {context?.usedPercentage != null
@@ -392,7 +392,7 @@ index 05f5a3c88..58788c7b6 100644
                      : "Not reported"}
                  </span>
                </div>
-@@ -455,11 +471,37 @@ export function ComposerStats({
+@@ -456,11 +472,37 @@ export function ComposerStats({
                    {context ? count(context.usedTokens) : "Not reported"}
                  </Detail>
                  <Detail label="Window size">{count(context?.maxTokens ?? undefined)}</Detail>
@@ -431,7 +431,7 @@ index 05f5a3c88..58788c7b6 100644
                {compactions.length > 0 && (
                  <div className="space-y-1.5">
                    <p className="font-medium">Recent compactions</p>
-@@ -497,6 +539,19 @@ export function ComposerStats({
+@@ -498,6 +540,19 @@ export function ComposerStats({
                  Compactions count completed events in the loaded main-agent history for this
                  provider session.
                </p>
