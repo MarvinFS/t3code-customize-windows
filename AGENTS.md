@@ -8,15 +8,15 @@ is to carry them onto the user's nightly with every feature still working.
 
 ## Start
 
-1. Run `./t3code-stats-bar build` from this repo. It finds the installed AppImage,
+1. Run `./t3code-customize build` from this repo. It finds the installed AppImage,
    reads the exact upstream commit it was built from, and applies the patches to
-   that commit in the source checkout at `~/.cache/t3code-stats-bar/t3code`.
+   that commit in the source checkout at `~/.cache/t3code-customize/t3code`.
 2. If it reports a conflict, a rebase is stopped in that checkout. If it reports a
    failing test or typecheck, the commits are in place and the checks failed.
 
 ## Fix
 
-Work only in `~/.cache/t3code-stats-bar/t3code` and this repo.
+Work only in `~/.cache/t3code-customize/t3code` and this repo.
 
 - Conflicts: resolve each file, `git add` it, then `GIT_EDITOR=true git rebase --continue`.
   Keep upstream's change and port the patch on top of it. When upstream moved or split
@@ -32,7 +32,7 @@ feature can't be ported sensibly, stop and explain why.
 
 ## Finish
 
-Run `./t3code-stats-bar build --resume`. It reruns the checks on the checkout as you
+Run `./t3code-customize build --resume`. It reruns the checks on the checkout as you
 left it, builds, installs the result and writes the ported commits back to
 `patches/`. Leave the checkout clean with no rebase in progress.
 

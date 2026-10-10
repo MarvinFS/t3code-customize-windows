@@ -1,79 +1,73 @@
-# T3 Code Stats Bar
+# t3code-customize
 
 Your 5 hour and weekly usage, context and tokens per second, right under the T3 Code composer.
 
-Unofficial. Not affiliated with T3 Tools. Linux AppImage only for now.
+Unofficial. Not affiliated with T3 Tools. For T3 Code Nightly on Linux (AppImage).
 
 ## What you get
 
-- **Usage meters** for the 5 hour and weekly limits, read from the limits T3 already fetches from your providers.
-- **Context** used in the current thread. Hover it for the window, the automatic compaction threshold, and a Compact now button.
-- **Tokens per second** for the last response, with turn time and token details on hover. Claude rates are observed from the stream; Codex rates are labeled approximate.
+- **Usage meters** for your 5 hour and weekly limits, from the limits T3 already gets from your providers.
+- **Context** used in the thread. Hover it for the window size, the auto-compaction threshold and a Compact now button.
+- **Tokens per second** for the last response, with turn time and token details on hover. Claude rates are measured from the stream; Codex rates are labeled approximate.
 - **Cache rate** for the last turn.
 
-Turn it on in Settings, General, **Stats for nerds**. It shows up in threads once a provider is signed in.
-
-## How it works
-
-T3 Code is open source (MIT). This repo holds a few patches and one script. The script:
-
-1. finds your installed T3 Code AppImage and reads the exact upstream commit it was built from,
-2. applies the patches to that commit in a local checkout,
-3. runs the patch tests, then rebuilds the web, server and desktop bundles,
-4. lays them over a copy of your app, leaving the native parts untouched.
-
-Everything runs on your machine. Your AppImage and your T3 data are never modified, and stock T3 Code is one command away.
+Everything else is stock T3 Code, including T3 Connect and the mobile app.
 
 ## Install
 
-You need Linux x86_64, git, Node 24+ and about 6 GB of disk for the source and dependencies.
-
 ```sh
-git clone https://github.com/btsouth/t3code-stats-bar
-cd t3code-stats-bar
-./t3code-stats-bar install
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/btsouth/t3code-customize/main/install.sh)"
 ```
 
-The first build downloads the source and dependencies and takes 5 to 15 minutes. Later builds are faster. Then quit T3 Code fully, open **T3 Code (Stats Bar)** from your launcher and turn on Stats for nerds.
+Or clone it anywhere and run `./t3code-customize`.
 
-If your AppImage isn't in `~/Applications` or `~/Downloads`, pass it once: `./t3code-stats-bar install --appimage /path/to/T3-Code.AppImage`.
+The first run downloads T3 Code's source and build tools, so give it 5 to 15 minutes. Then quit T3 Code fully, open **T3 Code (Customized)** from your app launcher and turn on **Settings > General > Stats for nerds**.
 
-## After T3 Code updates
+You need git and Python 3. If your Node is older than 24, it fetches its own copy. It uses about 6 GB of disk. If your AppImage isn't in `~/Applications` or `~/Downloads`, run it once with `--appimage /path/to/T3-Code.AppImage`.
+
+## After every T3 Code update
 
 ```sh
-t3code-stats-bar update
+t3code-customize
 ```
 
-That pulls the latest patches and rebuilds for your new version. Until you do, the launcher opens stock T3 Code and tells you why.
+That's it. It pulls the latest patches, rebuilds for your new version and tells you when to reopen. Until you run it, the launcher opens stock T3 Code and tells you why.
 
 ## When a nightly breaks the patches
 
-Upstream moves fast, so this happens often. You have three options:
+Upstream moves fast, and sometimes a nightly changes the code the patches touch. When that happens:
 
-- Point your coding agent at this repo and ask it to follow [AGENTS.md](AGENTS.md).
-- Run it unattended: `t3code-stats-bar build --fix codex` (or `--fix claude`). This runs the agent with full permissions in the source checkout.
-- Wait for this repo to catch up, then `t3code-stats-bar update`.
+- If you have Claude Code or Codex installed, it offers to port the patches for you right there.
+- Otherwise, wait a bit: this repo usually catches up within a day. Then run `t3code-customize` again.
+- Or point any coding agent at this repo and ask it to follow [AGENTS.md](AGENTS.md).
 
-Your stock T3 Code keeps working in the meantime.
+Your current T3 Code keeps working the whole time.
+
+## How it works
+
+T3 Code is open source (MIT). This repo holds three patches and one script. The script:
+
+1. reads your installed AppImage: its exact upstream commit and the public config T3 Connect needs,
+2. applies the patches to that commit and runs their tests,
+3. rebuilds the web, server and desktop JavaScript,
+4. lays it over a copy of your app, keeping every native part as shipped, and checks the result byte for byte.
+
+Everything runs on your machine. Your AppImage and your T3 data are never modified.
 
 ## Commands
 
 ```
-t3code-stats-bar install     add the command and launcher, then build
-t3code-stats-bar update      pull the latest patches, then build
-t3code-stats-bar build       build for the installed AppImage
-t3code-stats-bar launch      open the stats bar build if it matches, else stock
-t3code-stats-bar status      show what the next launch will run
-t3code-stats-bar off | on    switch between stock and the stats bar build
-t3code-stats-bar uninstall   remove the launcher, builds and caches
+t3code-customize             update the patches and build for your installed T3 Code
+t3code-customize status      show what the next launch opens
+t3code-customize off | on    switch between stock and the customized build
+t3code-customize uninstall   remove it, its launcher, builds and caches
 ```
 
 ## Good to know
 
-- **Bugs:** before reporting anything to T3 Code, run `t3code-stats-bar off`, reopen and check it still happens on stock. Report stats bar problems here, not upstream.
-- **T3 Connect:** upstream bakes its cloud config into official builds, and this repo doesn't ship it. Sign in and remote access may not work in the stats bar build. If you need them, put the `T3CODE_*` values in `~/.config/t3code-stats-bar/build.env` and rebuild with `--force`.
-- **Other platforms:** macOS and Windows aren't supported. The patches are platform independent, so an agent can adapt the packaging steps.
-- **Files:** builds live in `~/.local/share/t3code-stats-bar`, the source checkout and logs in `~/.cache/t3code-stats-bar`.
+- **Bugs:** before reporting anything to T3 Code, run `t3code-customize off`, reopen and check it happens on stock too. Report customization problems here.
+- **macOS and Windows:** not supported yet. The patches are platform independent; only the packaging differs. Your agent can adapt it, and PRs are welcome.
+- **Files:** builds live in `~/.local/share/t3code-customize`, the source checkout and logs in `~/.cache/t3code-customize`.
 
 ## License
 

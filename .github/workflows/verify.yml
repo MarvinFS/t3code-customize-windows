@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 24
       - name: Apply patches to their base and run the checks
-        run: ./t3code-stats-bar verify
+        run: ./t3code-customize verify
       - name: Show the log on failure
         if: failure()
-        run: tail -n 200 ~/.cache/t3code-stats-bar/logs/*.log
+        run: tail -n 200 ~/.cache/t3code-customize/logs/*.log
