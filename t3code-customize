@@ -409,7 +409,8 @@ def prepare(target, log, resume=False):
 
 
 def install_dependencies(env, log):
-    step('Installing build dependencies (the first run takes a few minutes)...')
+    first = not (SOURCE / 'node_modules').exists()
+    step('Installing build dependencies' + (' (one time, a few minutes)...' if first else '...'))
     # Only JavaScript is rebuilt; native parts come from your own app, so no install scripts run.
     run([*pnpm(env), 'install', '--frozen-lockfile', '--ignore-scripts'], cwd=SOURCE, env=env, log=log)
 
@@ -505,10 +506,9 @@ def stuck_message(problem, target):
     if older_than_patches(target):
         return (f'{problem}\n\nYour T3 Code is older than these patches. Update T3 Code, then run {NAME} again.\n'
                 'Your current T3 Code is untouched.')
-    agents = ', '.join(f'{NAME} --fix {a}' for a in AGENTS)
     return (f'{problem}\n\nThis nightly changed code the patches touch. Any of these works:\n'
             f'  - wait for the repo to catch up (usually within a day), then run {NAME} again\n'
-            f'  - let an agent port them unattended: {agents}\n'
+            f'  - let an agent port them now: {NAME} --fix claude  (or --fix codex)\n'
             f'  - or ask your coding agent to follow {REPO}/AGENTS.md\n'
             'Your current T3 Code is untouched and still opens normally.')
 

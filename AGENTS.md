@@ -32,7 +32,11 @@ feature can't be ported sensibly, stop and explain why.
 
 ## Finish
 
-Run `./t3code-customize build --resume`. It reruns the checks on the checkout as you
+If `t3code-customize` started you, stop once the tests and typechecks in `checks.json`
+pass (run them from the source checkout with `node_modules/.bin/vp test run <files>` and
+`node_modules/.bin/tsc --noEmit -p <package>/tsconfig.json`). It continues the build itself.
+
+Otherwise run `./t3code-customize build --resume`. It reruns the checks on the checkout as you
 left it, builds, installs the result and writes the ported commits back to
 `patches/`. Leave the checkout clean with no rebase in progress.
 
