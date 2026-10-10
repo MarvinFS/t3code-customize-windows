@@ -55,6 +55,8 @@ PUBLIC_CONFIG = {
     'VITE_CLERK_CLI_OAUTH_CLIENT_ID': 'T3CODE_CLERK_CLI_OAUTH_CLIENT_ID',
     'VITE_T3CODE_RELAY_URL': 'T3CODE_RELAY_URL',
 }
+# Never prompts (it may run without a terminal) and keeps node_modules consistent between runs.
+PNPM_INSTALL = ['--frozen-lockfile', '--ignore-scripts', '--config.confirmModulesPurge=false']
 # Strings that only exist in bundles built with the patches.
 MARKERS = (('apps/server/dist/client/', b'statsForNerds'), ('apps/server/dist/', b'claude_observed'),
            ('apps/desktop/dist-electron/', b'statsForNerds'))
@@ -412,7 +414,7 @@ def install_dependencies(env, log):
     first = not (SOURCE / 'node_modules').exists()
     step('Installing build dependencies' + (' (one time, a few minutes)...' if first else '...'))
     # Only JavaScript is rebuilt; native parts come from your own app, so no install scripts run.
-    run([*pnpm(env), 'install', '--frozen-lockfile', '--ignore-scripts'], cwd=SOURCE, env=env, log=log)
+    run([*pnpm(env), 'install', *PNPM_INSTALL], cwd=SOURCE, env=env, log=log)
 
 
 def checks(env, log):

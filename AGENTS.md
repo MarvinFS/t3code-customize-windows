@@ -26,6 +26,8 @@ Work only in `~/.cache/t3code-customize/t3code` and this repo.
   commit per patch.
 - If a test file moved upstream, update its path in `checks.json`.
 - `git log <base>..<nightly commit>` and `git show` explain what changed upstream.
+- To install dependencies, use exactly `pnpm install --frozen-lockfile --ignore-scripts`
+  in the source checkout, the same as the tool.
 
 Do not drop a patch, delete or weaken a test, or skip a check to get green. If a
 feature can't be ported sensibly, stop and explain why.
