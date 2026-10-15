@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: t3code-customize <t3code-customize@localhost>
+Date: Sun, 11 Oct 2026 22:15:56 +0300
+Subject: [PATCH 4/5] fix(server): Stop clears the Monitor roster of the
+ provider thread it interrupted
+
+Stop on a settled thread closes the provider process and then settles what
+the thread still shows. The roster of a provider thread with a live session
+was skipped as owned by its process, but that process had just been closed.
+
+The process's own roster clear is a post-terminal write gated on
+lastRunOrdinal, so it is dropped once a later run, such as one that failed
+because a model change was refused while the Monitor ran, has taken the
+ordinal. The Monitor then stayed on the thread, its Stop button did nothing,
+and the Provider error stayed on screen.
+
+settleBackgroundWork already treats the stopped provider thread as dead for
+turn items; do the same for its roster.
+---
+ .../BackgroundWorkStop.integration.test.ts    | 39 +++++++++++++++++++
+ .../src/orchestration-v2/Orchestrator.ts      |  7 +++-
+ 2 files changed, 44 insertions(+), 2 deletions(-)
+
+diff --git a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
+index ed560fad6f..b8b153ec40 100644
+--- a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
++++ b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
+@@ -43,11 +43,13 @@ const stopEarlierBackgroundWork = ({
+   olderStart = false,
+   stalledRun,
+   workflowMember = false,
++  monitorRoster = false,
+ }: {
+   readonly failedStart?: boolean;
+   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
+   readonly olderStart?: boolean;
+   readonly workflowMember?: boolean;
++  readonly monitorRoster?: boolean;
+   readonly stalledRun?:
+     | "missing-session"
+     | "missing-session-terminal"
+@@ -858,6 +860,30 @@ const stopEarlierBackgroundWork = ({
+           });
+         }
+ 
++        if (monitorRoster) {
++          // A Monitor the Codex provider thread's process still reports. Its own
++          // clearing write is dropped once a later run owns lastRunOrdinal.
++          const current = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
++            (candidate) => candidate.id === codexProviderThread.id,
++          )!;
++          yield* sink.write({
++            events: [
++              {
++                id: EventId.make("monitor-roster"),
++                type: "provider-thread.updated",
++                threadId,
++                occurredAt: now,
++                payload: {
++                  ...current,
++                  pendingBackgroundTasks: [
++                    { taskId: "monitor-1", description: "Watch for the first run", kind: "monitor" },
++                  ],
++                },
++              },
++            ],
++          });
++        }
++
+         yield* orchestrator.dispatch(
+           stopWithQueue === "thread.stop"
+             ? {
+@@ -889,6 +915,14 @@ const stopEarlierBackgroundWork = ({
+           ],
+         );
+         const after = yield* orchestrator.getThreadProjection(threadId);
++        if (monitorRoster) {
++          // The interrupt returned, so the process that ran the Monitor is gone.
++          assert.deepEqual(
++            after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
++              ?.pendingBackgroundTasks,
++            [],
++          );
++        }
+         if (olderStart) {
+           assert.equal(
+             after.runs.find((run) => run.id === watcherRun.runId)?.status,
+@@ -952,6 +986,11 @@ it.effect(
+   () => stopEarlierBackgroundWork({ failedStart: true }),
+ );
+ 
++it.effect(
++  "Stop clears the Monitor roster of the interrupted provider thread while its session is live",
++  () => stopEarlierBackgroundWork({ failedStart: true, monitorRoster: true }),
++);
++
+ it.effect.each(["thread.stop", "run.interrupt"] as const)(
+   "%s stops background work when a later message is queued",
+   (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType }),
+diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
+index e793548ea5..0501ebae1e 100644
+--- a/apps/server/src/orchestration-v2/Orchestrator.ts
++++ b/apps/server/src/orchestration-v2/Orchestrator.ts
+@@ -8562,10 +8562,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+         }
+       }
+       for (const providerThread of input.projection.providerThreads) {
+-        // A live process owns its roster and reports clearing it.
++        // A live process owns its roster and reports clearing it. The stopped
++        // thread's process is gone, and its clearing write is dropped when a
++        // later run already owns lastRunOrdinal, so Stop clears the roster.
+         if (
+           (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 ||
+-          (yield* hasLiveSession(providerThread.id))
++          (providerThread.id !== input.stoppedProviderThreadId &&
++            (yield* hasLiveSession(providerThread.id)))
+         ) {
+           continue;
+         }

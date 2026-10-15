@@ -1,0 +1,2 @@
+# Patches are applied with git am; they must stay LF on Windows whatever core.autocrlf says.
+patches/* -text

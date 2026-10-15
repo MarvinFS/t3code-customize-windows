@@ -1,0 +1,308 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: t3code-customize <t3code-customize@localhost>
+Date: Tue, 13 Oct 2026 10:49:34 +0300
+Subject: [PATCH 5/5] feat(web): show each Claude skill load as its own
+ timeline row
+
+A Skill tool call was folded into the surrounding tool group, so a loaded
+skill only showed up after expanding "Used N tools" and then its row, which
+opened raw JSON.
+
+Pull Skill calls out of the work group the way context compaction is, and
+render them like the Claude Code CLI does: "Skill(name)" with the arguments,
+and a status line below it ("Loading skill" with the activity shimmer,
+"Successfully loaded skill", or "Failed to load skill"). The row has nothing
+to expand and stays visible when a finished turn folds its work.
+---
+ .../chat/MessagesTimeline.logic.test.ts       | 101 ++++++++++++++++++
+ .../components/chat/MessagesTimeline.logic.ts |  50 ++++++++-
+ .../src/components/chat/MessagesTimeline.tsx  |  40 +++++++
+ 3 files changed, 190 insertions(+), 1 deletion(-)
+
+diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+index caaa2d8241..00bd6808be 100644
+--- a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
++++ b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
+@@ -1060,6 +1060,107 @@ describe("deriveMessagesTimelineRows", () => {
+     },
+   );
+ 
++  describe("skill rows", () => {
++    const work = (id: string, entry: Partial<WorkLogEntry>) => ({
++      id,
++      kind: "work" as const,
++      createdAt: "2026-01-01T00:00:00Z",
++      entry: {
++        id,
++        createdAt: "2026-01-01T00:00:00Z",
++        label: "Tool",
++        tone: "tool" as const,
++        ...entry,
++      },
++    });
++    const command = (id: string) =>
++      work(id, { label: "Ran command", command: "git status", itemType: "command_execution" });
++    const dynamicTool = (id: string, toolName: string, input: unknown, extra = {}) =>
++      work(id, {
++        itemType: "dynamic_tool",
++        toolLifecycleStatus: "completed",
++        structuredPayload: { type: "dynamic_tool", toolName, input } as never,
++        ...extra,
++      });
++    const rowsFor = (timelineEntries: ReturnType<typeof work>[]) =>
++      deriveMessagesTimelineRows({
++        timelineEntries,
++        isWorking: false,
++        activeTurnStartedAt: null,
++        turnDiffSummaries: [],
++        supportsConversationRollback: false,
++      });
++
++    it("splits a skill load out of the surrounding tool group", () => {
++      const rows = rowsFor([
++        command("command-1"),
++        dynamicTool("skill-1", "Skill", { skill: "fleet" }),
++        command("command-2"),
++      ]);
++      expect(rows.map((row) => row.kind)).toEqual(["work", "skill", "work"]);
++      expect(rows[1]).toEqual({
++        kind: "skill",
++        id: "skill-1",
++        createdAt: "2026-01-01T00:00:00Z",
++        name: "fleet",
++        status: "loaded",
++      });
++    });
++
++    it("shows a lone skill load with its arguments", () => {
++      expect(
++        rowsFor([dynamicTool("skill-1", "Skill", { skill: "recall", args: " vpn " })]),
++      ).toEqual([
++        {
++          kind: "skill",
++          id: "skill-1",
++          createdAt: "2026-01-01T00:00:00Z",
++          name: "recall",
++          args: "vpn",
++          status: "loaded",
++        },
++      ]);
++    });
++
++    it("marks a failed skill load", () => {
++      const rows = rowsFor([
++        dynamicTool("skill-1", "Skill", { skill: "fleet" }, { toolLifecycleStatus: "failed" }),
++      ]);
++      expect(rows).toMatchObject([{ kind: "skill", status: "failed" }]);
++    });
++
++    it("keeps a skill load visible when its turn folds", () => {
++      const runId = "turn-1" as never;
++      const rows = deriveMessagesTimelineRows({
++        timelineEntries: [
++          work("command-1", { runId, label: "Ran command", command: "git status" }),
++          dynamicTool("skill-1", "Skill", { skill: "fleet" }, { runId }),
++        ],
++        latestRun: {
++          runId,
++          status: "interrupted",
++          startedAt: "2026-01-01T00:00:00Z",
++          completedAt: "2026-01-01T00:00:47Z",
++        },
++        isWorking: false,
++        activeTurnStartedAt: null,
++        turnDiffSummaries: [],
++        supportsConversationRollback: false,
++      });
++      expect(rows.map((row) => row.kind)).toEqual(["turn-fold", "skill"]);
++    });
++
++    it("keeps other dynamic tools in the tool group", () => {
++      const rows = rowsFor([
++        command("command-1"),
++        dynamicTool("tool-1", "t3-code.t3_thread_read", { threadId: "thread-child" }),
++        command("command-2"),
++      ]);
++      expect(rows).toHaveLength(1);
++      expect(rows.some((row) => row.kind === "skill")).toBe(false);
++    });
++  });
++
+   it("keeps context compaction visible outside folded work", () => {
+     const rows = deriveMessagesTimelineRows({
+       timelineEntries: [
+diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.ts b/apps/web/src/components/chat/MessagesTimeline.logic.ts
+index 25f67ffce1..b8d99e0ff3 100644
+--- a/apps/web/src/components/chat/MessagesTimeline.logic.ts
++++ b/apps/web/src/components/chat/MessagesTimeline.logic.ts
+@@ -63,7 +63,7 @@ import {
+ import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+ import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
+ import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
+-import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
++import { claudeSkillInvocation, dynamicToolTitle } from "@t3tools/shared/toolActivity";
+ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+ import {
+   collectToolFilePaths,
+@@ -92,6 +92,14 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+   );
+ }
+ 
++/** The Claude skill this entry loads; skill loads get a row of their own. */
++export function workEntrySkill(entry: WorkLogEntry) {
++  const item = entry.structuredPayload;
++  return item?.type === "dynamic_tool"
++    ? claudeSkillInvocation(item.toolName, item.input)
++    : undefined;
++}
++
+ function singleToolCallLabel(entry: WorkLogEntry): string {
+   if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
+   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
+@@ -598,6 +606,14 @@ type MessagesTimelineRowContent =
+       label: string;
+       active: boolean;
+     }
++  | {
++      kind: "skill";
++      id: string;
++      createdAt: string;
++      name: string;
++      args?: string;
++      status: "running" | "loaded" | "failed";
++    }
+   | {
+       kind: "message";
+       id: string;
+@@ -1154,6 +1170,7 @@ function deriveTurnFolds(input: {
+       // launching run and stay visible after the surrounding work folds.
+       if (
+         timelineEntryIsPersistentResourceCard(entry) ||
++        (entry.kind === "work" && workEntrySkill(entry.entry) !== undefined) ||
+         input.liveSubagentEntryIds.has(entry.id) ||
+         input.completeSupersededReplyEntryIds.has(entry.id)
+       ) {
+@@ -1507,6 +1524,7 @@ export function deriveMessagesTimelineRows(input: {
+         entry.entry.itemType === "notification" ||
+         !runIdIsActiveResponse(entry.entry.runId) ||
+         entry.entry.sourceActivityKind === "context-compaction" ||
++        workEntrySkill(entry.entry) !== undefined ||
+         collapsedEntryIds.has(entry.id) ||
+         collapsedSupersededEntryIds.has(entry.id) ||
+         foldsByAnchorEntryId.has(entry.id) ||
+@@ -1666,6 +1684,25 @@ export function deriveMessagesTimelineRows(input: {
+       continue;
+     }
+ 
++    const skill = timelineEntry.kind === "work" ? workEntrySkill(timelineEntry.entry) : undefined;
++    if (timelineEntry.kind === "work" && skill) {
++      const entry = timelineEntry.entry;
++      nextRows.push({
++        kind: "skill",
++        id: timelineEntry.id,
++        createdAt: timelineEntry.createdAt,
++        name: skill.name,
++        ...(skill.args ? { args: skill.args } : {}),
++        status:
++          entry.toolLifecycleStatus === "inProgress" && workEntryIsInActiveRun(entry)
++            ? "running"
++            : workEntryDisplayIndicatesToolFailure(entry)
++              ? "failed"
++              : "loaded",
++      });
++      continue;
++    }
++
+     if (timelineEntry.kind === "work") {
+       if (
+         (timelineEntry.entry.runId != null && failedRunIds.has(timelineEntry.entry.runId)) ||
+@@ -1693,6 +1730,7 @@ export function deriveMessagesTimelineRows(input: {
+           !nextEntry ||
+           nextEntry.kind !== "work" ||
+           nextEntry.entry.sourceActivityKind === "context-compaction" ||
++          workEntrySkill(nextEntry.entry) !== undefined ||
+           nextEntry.entry.tone === "error" ||
+           nextEntry.entry.sourceActivityKind === "runtime.error" ||
+           nextEntry.entry.itemType === "system_notice" ||
+@@ -2282,6 +2320,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
+       return a.createdAt === bc.createdAt && a.label === bc.label && a.active === bc.active;
+     }
+ 
++    case "skill": {
++      const bs = b as typeof a;
++      return (
++        a.createdAt === bs.createdAt &&
++        a.name === bs.name &&
++        a.args === bs.args &&
++        a.status === bs.status
++      );
++    }
++
+     case "proposed-plan":
+       return a.proposedPlan === (b as typeof a).proposedPlan;
+ 
+diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
+index d490b980e5..623dd62d23 100644
+--- a/apps/web/src/components/chat/MessagesTimeline.tsx
++++ b/apps/web/src/components/chat/MessagesTimeline.tsx
+@@ -2099,6 +2099,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+                 row.kind === "worktree-setup" ||
+                 row.kind === "event" ||
+                 row.kind === "attempt-fold" ||
++                row.kind === "skill" ||
+                 row.kind === "html-render" ||
+                 row.kind === "mcp-app"
+               ? "pb-2"
+@@ -2142,6 +2143,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
+       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
++      {row.kind === "skill" ? <SkillTimelineRow row={row} /> : null}
+       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+       {row.kind === "message" && row.message.role === "assistant" ? (
+         <AssistantTimelineRow row={row} />
+@@ -2216,6 +2218,44 @@ function ContextCompactionTimelineRow({
+   );
+ }
+ 
++const SKILL_ROW_STATUS = {
++  running: "Loading skill",
++  loaded: "Successfully loaded skill",
++  failed: "Failed to load skill",
++} as const;
++
++/** A skill load stays readable at a glance, like the Claude Code CLI shows it. */
++function SkillTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "skill" }> }) {
++  const status = SKILL_ROW_STATUS[row.status];
++  return (
++    <div className="mx-auto w-full max-w-(--chat-content-max-width) py-1 text-sm">
++      <div className="flex min-w-0 items-center gap-1.5 text-foreground">
++        <span className="flex shrink-0 [&_svg]:size-3.5">
++          <SkillChipIcon />
++        </span>
++        <span className="shrink-0 font-medium">Skill({row.name})</span>
++        {row.args ? <span className="truncate text-muted-foreground">{row.args}</span> : null}
++      </div>
++      <div
++        className={`flex items-center gap-1.5 pl-1.5 text-xs ${
++          row.status === "failed" ? "text-destructive" : "text-muted-foreground"
++        }`}
++      >
++        <span aria-hidden="true">└</span>
++        <span
++          ref={row.status === "running" ? observeVisibleAnimation : undefined}
++          className="relative overflow-hidden"
++        >
++          {status}
++          {row.status === "running" ? (
++            <ActivityShimmerOverlay>{status}</ActivityShimmerOverlay>
++          ) : null}
++        </span>
++      </div>
++    </div>
++  );
++}
++
+ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
+   const ctx = use(TimelineRowCtx);
+   const asset = useMemo(

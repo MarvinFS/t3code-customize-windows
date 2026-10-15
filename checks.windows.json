@@ -1,0 +1,20 @@
+{
+  "knownFailures": [
+    {
+      "test": "backs off zero Retry-After for 2 then 4 minutes and resets after success",
+      "reason": "asserts POSIX permission bits (stat mode & 0o777 equals 0o600); Windows reports 0o666. Added by patch 0002."
+    },
+    {
+      "test": "shares each good reading for other local readers of the login",
+      "reason": "same POSIX permission bit assertion (0o600). Added by patch 0002."
+    },
+    {
+      "test": "names an expired Claude login instead of the terminal API error",
+      "reason": "upstream test looks for the literal cwd /synthetic/project, which Windows reports as C:\\synthetic\\project. The patches touch neither this test nor the code that builds the message."
+    },
+    {
+      "test": "moves the root's foreground subagents to the background before a steer (never answers)",
+      "reason": "upstream test added in #19210; it times out after 60s on Windows. It fails the same way on unpatched upstream e6bbfdb9ff (checked 2026-10-15), and the patches do not touch the steer code. The test waits on TestClock for a move that never answers. The other five variants of it pass."
+    }
+  ]
+}
