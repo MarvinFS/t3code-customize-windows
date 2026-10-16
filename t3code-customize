@@ -821,8 +821,30 @@ def stuck_message(problem, target):
 
 # --- Commands -----------------------------------------------------------------------
 
+def take_upstream_patches(follow, env):
+    """A copy with commits of its own keeps its script and docs; upstream's patches and checks.json replace the ones here.
+    Recorded as a merge that keeps this side's files, so the copy counts as up to date and upstream edits to the script never conflict."""
+    def git_(*args):
+        return subprocess.run(['git', *args], cwd=REPO, env=env, capture_output=True, text=True, encoding='utf-8')
+    base = git_('merge-base', 'HEAD', follow).stdout.strip()
+    if not base:
+        raise Stop(f'{REPO} and upstream ({follow}) share no history, so their patches cannot be compared.')
+    gone = git_('diff', '--name-only', '--no-renames', '--diff-filter=D', base, follow, '--', 'patches', 'checks.json')
+    if gone.returncode:
+        raise Stop(f'Could not compare {REPO} with upstream:\n{gone.stderr.strip()}')
+    for command in [('merge', '-s', 'ours', '--no-commit', '--quiet', follow), ('checkout', follow, '--', 'patches', 'checks.json'),
+                    *[('rm', '-q', '--ignore-unmatch', '--', name) for name in gone.stdout.split()],  # patches upstream dropped or renamed
+                    ('commit', '--no-edit', '--quiet')]:
+        result = git_(*command)
+        if result.returncode:
+            git_('merge', '--abort')
+            raise Stop(f'Could not take the latest patches into {REPO} (git {command[0]} failed):\n{(result.stderr or result.stdout).strip()}')
+    step('Took upstream\'s newer patches; this copy\'s own script and docs were kept.')
+
+
 def pull_latest():
-    """Fast-forward this repo to the latest patches, keeping any local port in a backup."""
+    """Bring this repo up to date: a plain clone fast-forwards, a copy with commits of its own takes upstream's patches.
+    Any local port of the patches is kept in a backup."""
     if not (REPO / '.git').exists():
         return
     status = subprocess.run(['git', 'status', '--porcelain', '--', 'patches', 'checks.json'],
@@ -844,18 +866,8 @@ def pull_latest():
         subprocess.run(['git', 'checkout', '--quiet', '--', 'patches', 'checks.json'], cwd=REPO, check=True)
         say(f'Newer patches are available; your local port was saved to {backup}.')
     env = {**os.environ, **GIT_ENV}
-    if subprocess.run(['git', 'merge', '--no-edit', '--quiet', follow], cwd=REPO, env=env).returncode:
-        conflicted = subprocess.run(['git', 'diff', '--name-only', '--diff-filter=U'], cwd=REPO, capture_output=True,
-                                    text=True, encoding='utf-8').stdout.split()
-        # The patches are upstream's artifact: a newer port replaces one committed here (a conflict only in them is not ours to keep).
-        if conflicted and all(f.startswith('patches/') or f == 'checks.json' for f in conflicted):
-            subprocess.run(['git', 'checkout', follow, '--', 'patches', 'checks.json'], cwd=REPO, check=True)
-            subprocess.run(['git', 'add', 'patches', 'checks.json'], cwd=REPO, check=True)
-            subprocess.run(['git', 'commit', '--no-edit', '--quiet'], cwd=REPO, env=env, check=True)
-            step('Took upstream\'s newer patches over the ones committed here.')
-        else:
-            subprocess.run(['git', 'merge', '--abort'], cwd=REPO, stderr=subprocess.DEVNULL)
-            raise Stop(f'Could not merge the latest patches into {REPO} (conflict with local edits). Run git status there.')
+    if subprocess.run(['git', 'merge', '--ff-only', '--quiet', follow], cwd=REPO, env=env, stderr=subprocess.DEVNULL).returncode:
+        take_upstream_patches(follow, env)  # not a fast-forward: this copy has commits of its own
     after = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=REPO, capture_output=True, text=True).stdout
     if after != before:
         step('Got the latest patches.')
