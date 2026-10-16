@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Tue, 13 Oct 2026 10:49:34 +0300
-Subject: [PATCH 5/5] feat(web): show each Claude skill load as its own
+Subject: [PATCH 6/7] feat(web): show each Claude skill load as its own
  timeline row
 
 A Skill tool call was folded into the surrounding tool group, so a loaded
@@ -20,10 +20,10 @@ to expand and stays visible when a finished turn folds its work.
  3 files changed, 190 insertions(+), 1 deletion(-)
 
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-index caaa2d8241..00bd6808be 100644
+index a8f77bc0ef..f71ac5ee4a 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-@@ -1060,6 +1060,107 @@ describe("deriveMessagesTimelineRows", () => {
+@@ -1059,6 +1059,107 @@ describe("deriveMessagesTimelineRows", () => {
      },
    );
  
@@ -132,7 +132,7 @@ index caaa2d8241..00bd6808be 100644
      const rows = deriveMessagesTimelineRows({
        timelineEntries: [
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.ts b/apps/web/src/components/chat/MessagesTimeline.logic.ts
-index 25f67ffce1..b8d99e0ff3 100644
+index a602e954de..7dd5b586fb 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.ts
 @@ -63,7 +63,7 @@ import {
@@ -144,7 +144,7 @@ index 25f67ffce1..b8d99e0ff3 100644
  import { formatWorkspaceRelativePath } from "../../filePathDisplay";
  import {
    collectToolFilePaths,
-@@ -92,6 +92,14 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+@@ -91,6 +91,14 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
    );
  }
  
@@ -159,7 +159,7 @@ index 25f67ffce1..b8d99e0ff3 100644
  function singleToolCallLabel(entry: WorkLogEntry): string {
    if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
    const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
-@@ -598,6 +606,14 @@ type MessagesTimelineRowContent =
+@@ -556,6 +564,14 @@ type MessagesTimelineRowContent =
        label: string;
        active: boolean;
      }
@@ -174,15 +174,15 @@ index 25f67ffce1..b8d99e0ff3 100644
    | {
        kind: "message";
        id: string;
-@@ -1154,6 +1170,7 @@ function deriveTurnFolds(input: {
-       // launching run and stay visible after the surrounding work folds.
+@@ -1078,6 +1094,7 @@ function deriveTurnFolds(input: {
+       }
        if (
          timelineEntryIsPersistentResourceCard(entry) ||
 +        (entry.kind === "work" && workEntrySkill(entry.entry) !== undefined) ||
          input.liveSubagentEntryIds.has(entry.id) ||
          input.completeSupersededReplyEntryIds.has(entry.id)
        ) {
-@@ -1507,6 +1524,7 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1415,6 +1432,7 @@ export function deriveMessagesTimelineRows(input: {
          entry.entry.itemType === "notification" ||
          !runIdIsActiveResponse(entry.entry.runId) ||
          entry.entry.sourceActivityKind === "context-compaction" ||
@@ -190,7 +190,7 @@ index 25f67ffce1..b8d99e0ff3 100644
          collapsedEntryIds.has(entry.id) ||
          collapsedSupersededEntryIds.has(entry.id) ||
          foldsByAnchorEntryId.has(entry.id) ||
-@@ -1666,6 +1684,25 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1572,6 +1590,25 @@ export function deriveMessagesTimelineRows(input: {
        continue;
      }
  
@@ -216,7 +216,7 @@ index 25f67ffce1..b8d99e0ff3 100644
      if (timelineEntry.kind === "work") {
        if (
          (timelineEntry.entry.runId != null && failedRunIds.has(timelineEntry.entry.runId)) ||
-@@ -1693,6 +1730,7 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1599,6 +1636,7 @@ export function deriveMessagesTimelineRows(input: {
            !nextEntry ||
            nextEntry.kind !== "work" ||
            nextEntry.entry.sourceActivityKind === "context-compaction" ||
@@ -224,7 +224,7 @@ index 25f67ffce1..b8d99e0ff3 100644
            nextEntry.entry.tone === "error" ||
            nextEntry.entry.sourceActivityKind === "runtime.error" ||
            nextEntry.entry.itemType === "system_notice" ||
-@@ -2282,6 +2320,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
+@@ -2162,6 +2200,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
        return a.createdAt === bc.createdAt && a.label === bc.label && a.active === bc.active;
      }
  
@@ -242,10 +242,10 @@ index 25f67ffce1..b8d99e0ff3 100644
        return a.proposedPlan === (b as typeof a).proposedPlan;
  
 diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
-index d490b980e5..623dd62d23 100644
+index e2a3b9dfd6..eefceb5fe0 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.tsx
 +++ b/apps/web/src/components/chat/MessagesTimeline.tsx
-@@ -2099,6 +2099,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -2046,6 +2046,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                  row.kind === "worktree-setup" ||
                  row.kind === "event" ||
                  row.kind === "attempt-fold" ||
@@ -253,7 +253,7 @@ index d490b980e5..623dd62d23 100644
                  row.kind === "html-render" ||
                  row.kind === "mcp-app"
                ? "pb-2"
-@@ -2142,6 +2143,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -2089,6 +2090,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
        {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
        {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
        {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
@@ -261,7 +261,7 @@ index d490b980e5..623dd62d23 100644
        {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
        {row.kind === "message" && row.message.role === "assistant" ? (
          <AssistantTimelineRow row={row} />
-@@ -2216,6 +2218,44 @@ function ContextCompactionTimelineRow({
+@@ -2163,6 +2165,44 @@ function ContextCompactionTimelineRow({
    );
  }
  

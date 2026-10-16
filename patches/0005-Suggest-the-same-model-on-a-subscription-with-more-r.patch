@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Sun, 11 Oct 2026 02:06:07 +0200
-Subject: [PATCH 4/5] Suggest the same model on a subscription with more room
+Subject: [PATCH 5/7] Suggest the same model on a subscription with more room
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -24,7 +24,7 @@ explains why and when a started thread cannot switch.
  create mode 100644 apps/web/src/components/chat/SubscriptionSwitch.logic.ts
 
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index 2bcddefbb..b3c17802a 100644
+index 3b07394170..f843713496 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
 @@ -386,6 +386,7 @@ import {
@@ -35,7 +35,7 @@ index 2bcddefbb..b3c17802a 100644
    DraftId,
  } from "../composerDraftStore";
  import {
-@@ -3723,6 +3724,16 @@ export default function ChatView(props: ChatViewProps) {
+@@ -3605,6 +3606,16 @@ export default function ChatView(props: ChatViewProps) {
      [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
    );
    const activeUsageLimits = activeProviderStatus?.usageLimits;
@@ -52,7 +52,7 @@ index 2bcddefbb..b3c17802a 100644
    const activeProviderName =
      activeProviderStatus?.displayName?.trim() || activeProviderStatus?.instanceId || "";
    const composerStats = useMemo(() => {
-@@ -11788,6 +11799,13 @@ export default function ChatView(props: ChatViewProps) {
+@@ -11466,6 +11477,13 @@ export default function ChatView(props: ChatViewProps) {
                                    : compactDisabledReason
                            }
                            isCompacting={isCompacting}
@@ -67,7 +67,7 @@ index 2bcddefbb..b3c17802a 100644
                        )}
                        <div
 diff --git a/apps/web/src/components/chat/ComposerStats.tsx b/apps/web/src/components/chat/ComposerStats.tsx
-index 53b81a83a..4a4b72fcd 100644
+index 53b81a83a1..4a4b72fcd4 100644
 --- a/apps/web/src/components/chat/ComposerStats.tsx
 +++ b/apps/web/src/components/chat/ComposerStats.tsx
 @@ -1,6 +1,8 @@
@@ -190,7 +190,7 @@ index 53b81a83a..4a4b72fcd 100644
            {stats.map(({ key, node }, index) => (
 diff --git a/apps/web/src/components/chat/SubscriptionSwitch.logic.test.ts b/apps/web/src/components/chat/SubscriptionSwitch.logic.test.ts
 new file mode 100644
-index 000000000..da5f1aa6e
+index 0000000000..da5f1aa6e4
 --- /dev/null
 +++ b/apps/web/src/components/chat/SubscriptionSwitch.logic.test.ts
 @@ -0,0 +1,226 @@
@@ -422,7 +422,7 @@ index 000000000..da5f1aa6e
 +});
 diff --git a/apps/web/src/components/chat/SubscriptionSwitch.logic.ts b/apps/web/src/components/chat/SubscriptionSwitch.logic.ts
 new file mode 100644
-index 000000000..af475f0b2
+index 0000000000..af475f0b2a
 --- /dev/null
 +++ b/apps/web/src/components/chat/SubscriptionSwitch.logic.ts
 @@ -0,0 +1,225 @@

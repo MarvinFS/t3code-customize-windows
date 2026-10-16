@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Sun, 11 Oct 2026 22:15:56 +0300
-Subject: [PATCH 4/5] fix(server): Stop clears the Monitor roster of the
+Subject: [PATCH 4/7] fix(server): Stop clears the Monitor roster of the
  provider thread it interrupted
 
 Stop on a settled thread closes the provider process and then settles what
@@ -18,14 +18,14 @@ settleBackgroundWork already treats the stopped provider thread as dead for
 turn items; do the same for its roster.
 ---
  .../BackgroundWorkStop.integration.test.ts    | 39 +++++++++++++++++++
- .../src/orchestration-v2/Orchestrator.ts      |  7 +++-
- 2 files changed, 44 insertions(+), 2 deletions(-)
+ .../src/orchestration-v2/Orchestrator.ts      |  6 ++-
+ 2 files changed, 44 insertions(+), 1 deletion(-)
 
 diff --git a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
-index ed560fad6f..b8b153ec40 100644
+index 24521561f1..2d88c7690f 100644
 --- a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
 +++ b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
-@@ -43,11 +43,13 @@ const stopEarlierBackgroundWork = ({
+@@ -40,11 +40,13 @@ const stopEarlierBackgroundWork = ({
    olderStart = false,
    stalledRun,
    workflowMember = false,
@@ -39,7 +39,7 @@ index ed560fad6f..b8b153ec40 100644
    readonly stalledRun?:
      | "missing-session"
      | "missing-session-terminal"
-@@ -858,6 +860,30 @@ const stopEarlierBackgroundWork = ({
+@@ -840,6 +842,30 @@ const stopEarlierBackgroundWork = ({
            });
          }
  
@@ -70,7 +70,7 @@ index ed560fad6f..b8b153ec40 100644
          yield* orchestrator.dispatch(
            stopWithQueue === "thread.stop"
              ? {
-@@ -889,6 +915,14 @@ const stopEarlierBackgroundWork = ({
+@@ -869,6 +895,14 @@ const stopEarlierBackgroundWork = ({
            ],
          );
          const after = yield* orchestrator.getThreadProjection(threadId);
@@ -85,7 +85,7 @@ index ed560fad6f..b8b153ec40 100644
          if (olderStart) {
            assert.equal(
              after.runs.find((run) => run.id === watcherRun.runId)?.status,
-@@ -952,6 +986,11 @@ it.effect(
+@@ -931,6 +965,11 @@ it.effect(
    () => stopEarlierBackgroundWork({ failedStart: true }),
  );
  
@@ -98,14 +98,13 @@ index ed560fad6f..b8b153ec40 100644
    "%s stops background work when a later message is queued",
    (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType }),
 diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
-index e793548ea5..0501ebae1e 100644
+index 8369af77fd..311b0e1369 100644
 --- a/apps/server/src/orchestration-v2/Orchestrator.ts
 +++ b/apps/server/src/orchestration-v2/Orchestrator.ts
-@@ -8562,10 +8562,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+@@ -8457,9 +8457,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
          }
        }
        for (const providerThread of input.projection.providerThreads) {
--        // A live process owns its roster and reports clearing it.
 +        // A live process owns its roster and reports clearing it. The stopped
 +        // thread's process is gone, and its clearing write is dropped when a
 +        // later run already owns lastRunOrdinal, so Stop clears the roster.
