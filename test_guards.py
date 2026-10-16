@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for guards the tool must not lose: the rebuilt app keeps T3 Connect's public config, a stale or switched-off build
-falls back to stock T3 Code, the Start Menu shortcut gets its values as variables, and a second run cannot take the build lock.
+falls back to stock T3 Code, the Start Menu shortcut gets its values as variables, a second run cannot take the build lock, and publishing marks the
+newest nightly as Latest without deleting the build it just uploaded.
 Fake apps in a temp folder, never the real install or state. Windows only.
 
   python test_guards.py
@@ -162,7 +163,34 @@ def second_run_refused():
         check('already running' not in free.stderr and 'No T3 Code install' in free.stderr, f'released: {free.returncode} {free.stderr!r}')
 
 
+def publish_with(existing, version):
+    """Run the real publish() against a fake gh whose repo holds the existing tags; return the gh calls it made."""
+    calls = []
+
+    def fake_run(args, **_):
+        calls.append(args[1:])
+        listed = json.dumps([{'tagName': tag} for tag in existing]) if args[1:3] == ['release', 'list'] else ''
+        return SimpleNamespace(returncode=0, stdout=listed, stderr='')
+
+    with patched(subprocess=SimpleNamespace(run=fake_run), shutil=SimpleNamespace(which=lambda name: 'gh'),
+                 make_pack=lambda *args: Path('pack.zip'), sha256=lambda path: '0' * 64, say=lambda *args: None):
+        check(c.publish(Path('build'), version, 'a' * 40, 'owner/repo'), 'publish reported a failure')
+    return calls
+
+
+@scenario('marks the newest nightly Latest and keeps the build it just published, even an older one')
+def publish_orders_by_nightly():
+    newest, middle, older = 'v0.1.1-nightly.20261016.3190', 'v0.0.46-nightly.20261015.3171', 'v0.0.46-nightly.20261015.3158'
+    # GitHub lists by its createdAt, the tagged commit's date, so the order here says nothing about which build is newer.
+    calls = publish_with([older, newest, middle, 'v1.0'], older.lstrip('v'))
+    deleted = [call[2] for call in calls if call[:2] == ['release', 'delete']]
+    latest = [call[2] for call in calls if call[:2] == ['release', 'edit'] and '--latest' in call]
+    check(deleted == [middle], f'deleted {deleted}')
+    check(latest == [newest], f'marked Latest {latest}')
+
+
 if __name__ == '__main__':
-    for test in (overlay_keeps_config, launch_falls_back, shortcut_is_not_interpolated, shortcut_round_trip, second_run_refused):
+    for test in (overlay_keeps_config, launch_falls_back, shortcut_is_not_interpolated, shortcut_round_trip, second_run_refused,
+                 publish_orders_by_nightly):
         test()
     print('all passed')

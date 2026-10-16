@@ -1255,12 +1255,13 @@ def cmd_pack(args):
         'and let it overwrite resources\\app.asar and resources\\server.asar.')
 
 
-RELEASE_TAG = re.compile(r'v\d+\.\d+\.\d+-nightly\.\d+\.\d+')
+RELEASE_TAG = re.compile(r'v\d+\.\d+\.\d+-nightly\.(\d+)\.(\d+)')
 
 
 def publish(build, version, commit, repo):
-    """Upload the build's zip as a GitHub release of repo and keep only the two newest of our releases (the current and the
-    previous one). Anything that goes wrong is reported and never fails the build; nothing is deleted unless the upload worked."""
+    """Upload the build's zip as a GitHub release of repo, keep only it and the newest other of our releases, and mark the
+    newest nightly as Latest. Anything that goes wrong is reported and never fails the build; nothing is deleted unless the
+    upload worked."""
     try:
         gh = shutil.which('gh')
         if not gh:
@@ -1288,11 +1289,16 @@ def publish(build, version, commit, repo):
             run('release', 'upload', tag, str(pack), '--clobber')
         else:
             run('release', 'create', tag, str(pack), '--title', f'T3 Code Nightly {version}', '--notes', notes)
-        releases = json.loads(run('release', 'list', '--limit', '100', '--json', 'tagName,createdAt'))
-        ours = sorted((r for r in releases if RELEASE_TAG.fullmatch(r['tagName'])), key=lambda r: r['createdAt'], reverse=True)
-        for old in ours[2:]:
-            run('release', 'delete', old['tagName'], '--cleanup-tag', '--yes')
-        say(f'    Published {tag} to {repo}' + (f' and removed {len(ours) - 2} older' if len(ours) > 2 else '') + '.')
+        releases = json.loads(run('release', 'list', '--limit', '100', '--json', 'tagName'))
+        # Newest nightly first, by its date and build number: GitHub's createdAt is the date of the tagged commit.
+        ours = sorted((r['tagName'] for r in releases if RELEASE_TAG.fullmatch(r['tagName'])),
+                      key=lambda tag: tuple(map(int, RELEASE_TAG.fullmatch(tag).groups())), reverse=True)
+        keep = [tag] + [t for t in ours if t != tag][:1]  # this build, even a rebuild of an older nightly, and the newest other
+        old = [t for t in ours if t not in keep]
+        for stale in old:
+            run('release', 'delete', stale, '--cleanup-tag', '--yes')
+        run('release', 'edit', ours[0], '--latest')  # otherwise GitHub badges whichever release was created last
+        say(f'    Published {tag} to {repo}' + (f' and removed {len(old)} older' if old else '') + '.')
         return True
     except (Stop, OSError, ValueError, KeyError) as problem:
         say(f'    Could not publish to {repo}: {problem}')
