@@ -1,14 +1,6 @@
 {
   "knownFailures": [
     {
-      "test": "backs off zero Retry-After for 2 then 4 minutes and resets after success",
-      "reason": "asserts POSIX permission bits (stat mode & 0o777 equals 0o600); Windows reports 0o666. Added by patch 0002."
-    },
-    {
-      "test": "shares each good reading for other local readers of the login",
-      "reason": "same POSIX permission bit assertion (0o600). Added by patch 0002."
-    },
-    {
       "test": "names an expired Claude login instead of the terminal API error",
       "reason": "upstream test looks for the literal cwd /synthetic/project, which Windows reports as C:\\synthetic\\project. The patches touch neither this test nor the code that builds the message."
     },
