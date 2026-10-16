@@ -74,8 +74,8 @@ class Repos:
         write(self.up / 'README.md', 'readme v2\n')
         commit(self.up, 'v2')
 
-    def close(self):
-        shutil.rmtree(self.dir, ignore_errors=True)
+    def close(self):  # git marks its object files read-only, which blocks rmtree on Windows
+        shutil.rmtree(self.dir, onexc=lambda function, path, error: (os.chmod(path, 0o700), function(path)))
 
 
 def pull(path, world):
