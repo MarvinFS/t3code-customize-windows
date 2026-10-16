@@ -28,7 +28,7 @@ Subject: [PATCH 2/5] Usage limits: background polling, reset-aware merging and
  20 files changed, 1736 insertions(+), 97 deletions(-)
 
 diff --git a/apps/server/src/provider/ClaudeCapabilitiesProbe.test.ts b/apps/server/src/provider/ClaudeCapabilitiesProbe.test.ts
-index c294e2eba1..c7c535ca16 100644
+index c294e2eba..c7c535ca1 100644
 --- a/apps/server/src/provider/ClaudeCapabilitiesProbe.test.ts
 +++ b/apps/server/src/provider/ClaudeCapabilitiesProbe.test.ts
 @@ -2,6 +2,7 @@
@@ -48,7 +48,7 @@ index c294e2eba1..c7c535ca16 100644
            rate_limits_available: true,
            rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
 diff --git a/apps/server/src/provider/ClaudeProvider.ts b/apps/server/src/provider/ClaudeProvider.ts
-index d53d86b12d..07ddbb703d 100644
+index d53d86b12..07ddbb703 100644
 --- a/apps/server/src/provider/ClaudeProvider.ts
 +++ b/apps/server/src/provider/ClaudeProvider.ts
 @@ -287,6 +287,7 @@ type ClaudeCapabilitiesProbe = {
@@ -95,7 +95,7 @@ index d53d86b12d..07ddbb703d 100644
      resolveResetCredits &&
      capabilities.subscriptionType &&
 diff --git a/apps/server/src/provider/CodexProvider.ts b/apps/server/src/provider/CodexProvider.ts
-index 7d4bbfdf5d..ddf98064c7 100644
+index 7d4bbfdf5..ddf98064c 100644
 --- a/apps/server/src/provider/CodexProvider.ts
 +++ b/apps/server/src/provider/CodexProvider.ts
 @@ -57,6 +57,7 @@ const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
@@ -138,7 +138,7 @@ index 7d4bbfdf5d..ddf98064c7 100644
  
    return buildServerProvider({
 diff --git a/apps/server/src/provider/Drivers/ClaudeDriver.ts b/apps/server/src/provider/Drivers/ClaudeDriver.ts
-index a379280969..25ac3c6ee0 100644
+index a37928096..25ac3c6ee 100644
 --- a/apps/server/src/provider/Drivers/ClaudeDriver.ts
 +++ b/apps/server/src/provider/Drivers/ClaudeDriver.ts
 @@ -174,6 +174,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
@@ -176,7 +176,7 @@ index a379280969..25ac3c6ee0 100644
            resolveMaintenance().pipe(
              Effect.flatMap((maintenanceCapabilities) =>
 diff --git a/apps/server/src/provider/Drivers/CodexDriver.ts b/apps/server/src/provider/Drivers/CodexDriver.ts
-index 09d5413f39..ee846a17f1 100644
+index 09d5413f3..ee846a17f 100644
 --- a/apps/server/src/provider/Drivers/CodexDriver.ts
 +++ b/apps/server/src/provider/Drivers/CodexDriver.ts
 @@ -21,7 +21,11 @@
@@ -235,7 +235,7 @@ index 09d5413f39..ee846a17f1 100644
            resolveMaintenance().pipe(
              Effect.flatMap((maintenanceCapabilities) =>
 diff --git a/apps/server/src/provider/claudeResetCredits.test.ts b/apps/server/src/provider/claudeResetCredits.test.ts
-index a928e64c9f..692cb4ed5a 100644
+index a928e64c9..692cb4ed5 100644
 --- a/apps/server/src/provider/claudeResetCredits.test.ts
 +++ b/apps/server/src/provider/claudeResetCredits.test.ts
 @@ -1,17 +1,34 @@
@@ -792,7 +792,7 @@ index a928e64c9f..692cb4ed5a 100644
 +  );
 +});
 diff --git a/apps/server/src/provider/claudeResetCredits.ts b/apps/server/src/provider/claudeResetCredits.ts
-index 3c4a547420..4747f58366 100644
+index 3c4a54742..4747f5836 100644
 --- a/apps/server/src/provider/claudeResetCredits.ts
 +++ b/apps/server/src/provider/claudeResetCredits.ts
 @@ -10,6 +10,7 @@
@@ -969,7 +969,7 @@ index 3c4a547420..4747f58366 100644
  /** The organization the login is signed in to; one email can belong to several. */
  export const readClaudeOrganizationId = (accountConfigPath: string) =>
 diff --git a/apps/server/src/provider/claudeUsageLimits.test.ts b/apps/server/src/provider/claudeUsageLimits.test.ts
-index a3d326a7dc..e1d03df90e 100644
+index a3d326a7d..e1d03df90 100644
 --- a/apps/server/src/provider/claudeUsageLimits.test.ts
 +++ b/apps/server/src/provider/claudeUsageLimits.test.ts
 @@ -1,6 +1,10 @@
@@ -1190,7 +1190,7 @@ index a3d326a7dc..e1d03df90e 100644
 +  });
  });
 diff --git a/apps/server/src/provider/claudeUsageLimits.ts b/apps/server/src/provider/claudeUsageLimits.ts
-index 200aa6e713..728c2c5a69 100644
+index 200aa6e71..728c2c5a6 100644
 --- a/apps/server/src/provider/claudeUsageLimits.ts
 +++ b/apps/server/src/provider/claudeUsageLimits.ts
 @@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
@@ -1414,7 +1414,7 @@ index 200aa6e713..728c2c5a69 100644
 +    : undefined;
 +}
 diff --git a/apps/server/src/provider/codexUsageLimits.test.ts b/apps/server/src/provider/codexUsageLimits.test.ts
-index 8d310a9fff..8f0fa99cf8 100644
+index 8d310a9ff..8f0fa99cf 100644
 --- a/apps/server/src/provider/codexUsageLimits.test.ts
 +++ b/apps/server/src/provider/codexUsageLimits.test.ts
 @@ -19,8 +19,8 @@ describe("codexRateLimitsToLimits", () => {
@@ -1483,7 +1483,7 @@ index 8d310a9fff..8f0fa99cf8 100644
          windowDurationMins: 10080,
        },
 diff --git a/apps/server/src/provider/codexUsageLimits.ts b/apps/server/src/provider/codexUsageLimits.ts
-index b32f701de3..a697391235 100644
+index b32f701de..a69739123 100644
 --- a/apps/server/src/provider/codexUsageLimits.ts
 +++ b/apps/server/src/provider/codexUsageLimits.ts
 @@ -69,6 +69,7 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
@@ -1545,7 +1545,7 @@ index b32f701de3..a697391235 100644
    return windows.reduce<string | null>(
      (latest, window) =>
 diff --git a/apps/server/src/usage/cliproxyApi.ts b/apps/server/src/usage/cliproxyApi.ts
-index b80ebe5926..68c51422f2 100644
+index b80ebe592..68c51422f 100644
 --- a/apps/server/src/usage/cliproxyApi.ts
 +++ b/apps/server/src/usage/cliproxyApi.ts
 @@ -239,6 +239,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
@@ -1557,7 +1557,7 @@ index b80ebe5926..68c51422f2 100644
                rate_limits_available: true,
                rate_limits: {
 diff --git a/packages/contracts/src/providerUsageLimits.ts b/packages/contracts/src/providerUsageLimits.ts
-index 0108bbb669..51f891d1a3 100644
+index 0108bbb66..51f891d1a 100644
 --- a/packages/contracts/src/providerUsageLimits.ts
 +++ b/packages/contracts/src/providerUsageLimits.ts
 @@ -21,8 +21,18 @@ export const ServerProviderUsageWindow = Schema.Struct({
@@ -1580,7 +1580,7 @@ index 0108bbb669..51f891d1a3 100644
  });
  export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 diff --git a/packages/provider-core/src/server/managedProvider.test.ts b/packages/provider-core/src/server/managedProvider.test.ts
-index cbca7e42a9..8683ebf6e6 100644
+index cbca7e42a..8683ebf6e 100644
 --- a/packages/provider-core/src/server/managedProvider.test.ts
 +++ b/packages/provider-core/src/server/managedProvider.test.ts
 @@ -583,12 +583,19 @@ describe("makeManagedServerProvider", () => {
@@ -1811,7 +1811,7 @@ index cbca7e42a9..8683ebf6e6 100644
 +  ).pipe(Effect.provide(layerAlwaysRunTest)),
 +);
 diff --git a/packages/provider-core/src/server/managedProvider.ts b/packages/provider-core/src/server/managedProvider.ts
-index bac7fbd3a5..0d9b71e179 100644
+index bac7fbd3a..0d9b71e17 100644
 --- a/packages/provider-core/src/server/managedProvider.ts
 +++ b/packages/provider-core/src/server/managedProvider.ts
 @@ -4,7 +4,9 @@ import {
@@ -1932,7 +1932,7 @@ index bac7fbd3a5..0d9b71e179 100644
      input.refreshInterval !== undefined
        ? Effect.succeed(input.refreshInterval)
 diff --git a/packages/provider-core/src/server/usageLimits.test.ts b/packages/provider-core/src/server/usageLimits.test.ts
-index 9b305a74b9..b46853e372 100644
+index 9b305a74b..b46853e37 100644
 --- a/packages/provider-core/src/server/usageLimits.test.ts
 +++ b/packages/provider-core/src/server/usageLimits.test.ts
 @@ -7,6 +7,7 @@ const session = {
@@ -2195,7 +2195,7 @@ index 9b305a74b9..b46853e372 100644
 +  ).toBe(observed);
  });
 diff --git a/packages/provider-core/src/server/usageLimits.ts b/packages/provider-core/src/server/usageLimits.ts
-index ea8d0d1d02..c54d95bfd1 100644
+index ea8d0d1d0..c54d95bfd 100644
 --- a/packages/provider-core/src/server/usageLimits.ts
 +++ b/packages/provider-core/src/server/usageLimits.ts
 @@ -11,6 +11,8 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
@@ -2484,7 +2484,7 @@ index ea8d0d1d02..c54d95bfd1 100644
 +  };
  }
 diff --git a/packages/provider-cursor/src/server/usageLimits.ts b/packages/provider-cursor/src/server/usageLimits.ts
-index 049e646d2c..49228632dc 100644
+index 049e646d2..49228632d 100644
 --- a/packages/provider-cursor/src/server/usageLimits.ts
 +++ b/packages/provider-cursor/src/server/usageLimits.ts
 @@ -51,6 +51,7 @@ export function cursorUsageResponseToLimits(
@@ -2496,7 +2496,7 @@ index 049e646d2c..49228632dc 100644
          ...(resetsAt ? { resetsAt } : {}),
        });
 diff --git a/packages/provider-grok/src/server/usageLimits.ts b/packages/provider-grok/src/server/usageLimits.ts
-index d4a855883a..9ea7d58614 100644
+index d4a855883..9ea7d5861 100644
 --- a/packages/provider-grok/src/server/usageLimits.ts
 +++ b/packages/provider-grok/src/server/usageLimits.ts
 @@ -62,6 +62,7 @@ export function grokUsageResponseToLimits(
@@ -2508,7 +2508,7 @@ index d4a855883a..9ea7d58614 100644
      ...(Option.isSome(reset) ? { resetsAt: DateTime.formatIso(reset.value) } : {}),
    };
 diff --git a/packages/provider-opencode/src/server/usageLimits.ts b/packages/provider-opencode/src/server/usageLimits.ts
-index 6472bb7103..403feb81d5 100644
+index 6472bb710..403feb81d 100644
 --- a/packages/provider-opencode/src/server/usageLimits.ts
 +++ b/packages/provider-opencode/src/server/usageLimits.ts
 @@ -82,6 +82,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
