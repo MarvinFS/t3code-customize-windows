@@ -2,7 +2,7 @@
 
 A Windows port of [btsouth/t3code-customize](https://github.com/btsouth/t3code-customize). It adds a stats bar under the T3 Code composer and rebuilds your copy of T3 Code Nightly after every update. Unofficial, not affiliated with T3 Tools.
 
-The README in the repo root is btsouth's Linux README. It stays unchanged so his updates merge without conflicts. This page and [WINDOWS.md](https://github.com/MarvinFS/t3code-customize-windows/blob/main/WINDOWS.md) are the Windows docs.
+The README in the repo root is btsouth's own, kept as he wrote it. This page and [WINDOWS.md](https://github.com/MarvinFS/t3code-customize-windows/blob/main/WINDOWS.md) are the Windows docs.
 
 ## What you get
 
@@ -11,6 +11,7 @@ The README in the repo root is btsouth's Linux README. It stays unchanged so his
 - Tokens per second for the last response, with turn time and token details on hover. Claude rates are measured from the stream and Codex rates are labeled approximate.
 - Cache rate for the last turn.
 - Each Claude skill load as its own timeline row, shown like the Claude Code CLI does: `Skill(name)` with its arguments and a status line ("Loading skill", "Successfully loaded skill" or "Failed to load skill"). Stock T3 Code folds it into the "Used N tools" group, where it opens as raw JSON.
+- A chip on the stats line that offers the same model on the signed-in subscription with the most room, when the current one is on pace to run out before its reset.
 - A fix for Stop on a settled thread: it now clears the Monitor roster of the provider thread it interrupted, so the Monitor's Stop button works and the Provider error goes away.
 
 The stats line under the composer: 5 hour and weekly usage on the left, context and tokens per second on the right.
@@ -30,8 +31,12 @@ Everything else is stock T3 Code, including T3 Connect and the mobile app.
 | 0001 | Stats for Nerds: response throughput and the composer stats line | btsouth |
 | 0002 | Usage limits: background polling, reset-aware merging and fetch-time ordering | btsouth |
 | 0003 | Compaction settings and a stats Compact action | btsouth |
+| 0004 | Suggest the same model on a subscription with more room | btsouth |
 | 0004 | Stop clears the Monitor roster of the interrupted provider thread | this repo |
 | 0005 | Each Claude skill load as its own timeline row | this repo |
+| 0005 | Tests expect Windows file modes, so two limits tests run on Windows | btsouth |
+
+Two numbers appear twice because btsouth and this repo each added a 0004 and a 0005. The tool applies the patches in file-name order and renumbers them when it writes ported patches back.
 
 When a nightly moves the code a patch touches, the patches are ported here and `patches/base.txt` records the upstream commit they apply to.
 
@@ -61,10 +66,10 @@ Copy the two original files from `resources` somewhere first if you want a way b
 
 The tool applies the patches to the exact upstream commit of your installed nightly, then runs what `checks.json` lists:
 
-- 17 test files through `vp test run`.
+- 18 test files through `vp test run`.
 - A typecheck of 8 packages through `tsc-rs --noEmit`. `tsc-rs` is Theo Browne's Rust port of the TypeScript 7 compiler. T3 Code already depends on it, and its own package scripts call it.
 
-Four tests fail on Windows: two assert POSIX permission bits, one looks for a Unix path, and one upstream test times out. `checks.windows.json` lists each with its reason, and a build continues when only those fail. Any other failure stops the build and leaves your installed T3 Code alone.
+Two tests may fail on Windows: one looks for a Unix path (it passes on the current nightly), and one upstream test times out. `checks.windows.json` lists each with its reason, and a build continues when only those fail. Any other failure stops the build and leaves your installed T3 Code alone.
 
 ## License
 
