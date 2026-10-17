@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Sun, 11 Oct 2026 22:15:56 +0300
-Subject: [PATCH 4/7] fix(server): Stop clears the Monitor roster of the
+Subject: [PATCH 4/8] fix(server): Stop clears the Monitor roster of the
  provider thread it interrupted
 
 Stop on a settled thread closes the provider process and then settles what
@@ -98,10 +98,10 @@ index 24521561f1..2d88c7690f 100644
    "%s stops background work when a later message is queued",
    (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType }),
 diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
-index 8369af77fd..311b0e1369 100644
+index 1499ca975d..3d7a51e087 100644
 --- a/apps/server/src/orchestration-v2/Orchestrator.ts
 +++ b/apps/server/src/orchestration-v2/Orchestrator.ts
-@@ -8457,9 +8457,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+@@ -8458,9 +8458,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
          }
        }
        for (const providerThread of input.projection.providerThreads) {

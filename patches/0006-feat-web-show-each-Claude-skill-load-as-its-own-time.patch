@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Tue, 13 Oct 2026 10:49:34 +0300
-Subject: [PATCH 6/7] feat(web): show each Claude skill load as its own
+Subject: [PATCH 6/8] feat(web): show each Claude skill load as its own
  timeline row
 
 A Skill tool call was folded into the surrounding tool group, so a loaded
@@ -20,10 +20,10 @@ to expand and stays visible when a finished turn folds its work.
  3 files changed, 190 insertions(+), 1 deletion(-)
 
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-index a8f77bc0ef..f71ac5ee4a 100644
+index 650b2bf504..3adc5df666 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-@@ -1059,6 +1059,107 @@ describe("deriveMessagesTimelineRows", () => {
+@@ -1067,6 +1067,107 @@ describe("deriveMessagesTimelineRows", () => {
      },
    );
  
@@ -242,10 +242,10 @@ index a602e954de..7dd5b586fb 100644
        return a.proposedPlan === (b as typeof a).proposedPlan;
  
 diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
-index e2a3b9dfd6..eefceb5fe0 100644
+index 494c4dfd91..247390be95 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.tsx
 +++ b/apps/web/src/components/chat/MessagesTimeline.tsx
-@@ -2046,6 +2046,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -1897,6 +1897,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                  row.kind === "worktree-setup" ||
                  row.kind === "event" ||
                  row.kind === "attempt-fold" ||
@@ -253,7 +253,7 @@ index e2a3b9dfd6..eefceb5fe0 100644
                  row.kind === "html-render" ||
                  row.kind === "mcp-app"
                ? "pb-2"
-@@ -2089,6 +2090,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -1940,6 +1941,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
        {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
        {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
        {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
@@ -261,7 +261,7 @@ index e2a3b9dfd6..eefceb5fe0 100644
        {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
        {row.kind === "message" && row.message.role === "assistant" ? (
          <AssistantTimelineRow row={row} />
-@@ -2163,6 +2165,44 @@ function ContextCompactionTimelineRow({
+@@ -2011,6 +2013,44 @@ function ContextCompactionTimelineRow({
    );
  }
  
@@ -305,4 +305,4 @@ index e2a3b9dfd6..eefceb5fe0 100644
 +
  function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
    const ctx = use(TimelineRowCtx);
-   const asset = useMemo(
+   // Row updates rebuild attachment objects, so the asset follows only the

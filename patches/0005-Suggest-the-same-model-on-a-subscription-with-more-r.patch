@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Sun, 11 Oct 2026 02:06:07 +0200
-Subject: [PATCH 5/7] Suggest the same model on a subscription with more room
+Subject: [PATCH 5/8] Suggest the same model on a subscription with more room
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -15,33 +15,36 @@ Model-scoped weeklies only count for their own model family. Clicking
 switches the thread through the usual model selection; the tooltip
 explains why and when a started thread cannot switch.
 ---
- apps/web/src/components/ChatView.tsx          |  18 ++
+ apps/web/src/components/ChatView.tsx          |  20 ++
  .../web/src/components/chat/ComposerStats.tsx |  69 ++++++
  .../chat/SubscriptionSwitch.logic.test.ts     | 226 ++++++++++++++++++
  .../chat/SubscriptionSwitch.logic.ts          | 225 +++++++++++++++++
- 4 files changed, 538 insertions(+)
+ 4 files changed, 540 insertions(+)
  create mode 100644 apps/web/src/components/chat/SubscriptionSwitch.logic.test.ts
  create mode 100644 apps/web/src/components/chat/SubscriptionSwitch.logic.ts
 
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index 3b07394170..f843713496 100644
+index 1cdef93ab2..bb739b3495 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -386,6 +386,7 @@ import {
+@@ -320,7 +320,9 @@ import {
+   type ComposerFileAttachment,
    type ComposerImageAttachment,
    type DraftThreadEnvMode,
++  useComposerDraftModelState,
    useComposerDraftStore,
-+  useEffectiveComposerModelState,
++  deriveEffectiveComposerModelState,
    DraftId,
  } from "../composerDraftStore";
  import {
-@@ -3605,6 +3606,16 @@ export default function ChatView(props: ChatViewProps) {
-     [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
+@@ -2510,6 +2512,17 @@ export default function ChatView(props: ChatViewProps) {
+     ),
    );
    const activeUsageLimits = activeProviderStatus?.usageLimits;
 +  // The model the composer shows, so the switch keeps it while changing subscription.
-+  const { selectedModel: subscriptionSwitchModel } = useEffectiveComposerModelState({
-+    threadRef: composerDraftTarget,
++  const composerDraftModelState = useComposerDraftModelState(composerDraftTarget);
++  const { selectedModel: subscriptionSwitchModel } = deriveEffectiveComposerModelState({
++    draft: composerDraftModelState,
 +    providers: providerStatuses,
 +    selectedProvider,
 +    selectedInstanceId: activeProviderInstanceId,
@@ -51,8 +54,8 @@ index 3b07394170..f843713496 100644
 +  });
    const activeProviderName =
      activeProviderStatus?.displayName?.trim() || activeProviderStatus?.instanceId || "";
-   const composerStats = useMemo(() => {
-@@ -11466,6 +11477,13 @@ export default function ChatView(props: ChatViewProps) {
+   const composerStats = (() => {
+@@ -8407,6 +8420,13 @@ export default function ChatView(props: ChatViewProps) {
                                    : compactDisabledReason
                            }
                            isCompacting={isCompacting}

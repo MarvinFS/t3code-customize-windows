@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MarvinFS <MarvinFS@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 22:04:15 +0300
+Subject: [PATCH 8/8] fix(tests): keep the Claude wake harness out of the
+ host's ~/.claude
+
+The harness left CLAUDE_CONFIG_DIR unset, so every steer and turn scanned the real ~/.claude/skills. On a machine with many skills that read outlasts the tick budget of the "never answers" steer test, which then waits forever on a timeout nothing advances. The harness now points CLAUDE_CONFIG_DIR at an empty temp directory.
+---
+ .../src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts  | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
+index cd3d14a388..a4e34faa99 100644
+--- a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
++++ b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
+@@ -2351,6 +2351,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
+       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+         prefix: "t3-claude-v2-wake-",
+       });
++      // Skill discovery reads CLAUDE_CONFIG_DIR. Unset, that is the host's real ~/.claude, whose
++      // read time varies by machine and outlasts the tests' tick budgets.
++      const claudeConfigDir = yield* fileSystem.makeTempDirectoryScoped({
++        prefix: "t3-claude-v2-config-",
++      });
+       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+@@ -2387,7 +2392,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
+       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+-        environment: options?.environment ?? {},
++        environment: { CLAUDE_CONFIG_DIR: claudeConfigDir, ...options?.environment },
+         attachmentsDir,
+         fileSystem,
+         path: yield* Path.Path,

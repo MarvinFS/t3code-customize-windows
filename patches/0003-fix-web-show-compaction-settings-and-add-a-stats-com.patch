@@ -1,23 +1,23 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Sat, 10 Oct 2026 12:40:14 -0400
-Subject: [PATCH 3/7] fix(web): show compaction settings and add a stats
+Subject: [PATCH 3/8] fix(web): show compaction settings and add a stats
  compact action
 
 ---
- apps/web/src/components/ChatView.tsx          | 54 +++++++++--
+ apps/web/src/components/ChatView.tsx          | 46 ++++++++-
  .../chat/ComposerStats.logic.test.ts          | 96 +++++++++++++++++++
  .../components/chat/ComposerStats.logic.ts    | 52 ++++++++++
  .../web/src/components/chat/ComposerStats.tsx | 73 ++++++++++++--
  apps/web/src/lib/contextWindow.test.ts        | 56 ++++++++++-
  apps/web/src/lib/contextWindow.ts             | 12 +--
- 6 files changed, 317 insertions(+), 26 deletions(-)
+ 6 files changed, 310 insertions(+), 25 deletions(-)
 
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index d7ce16f851..3b07394170 100644
+index c4923c7339..1cdef93ab2 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -3612,23 +3612,49 @@ export default function ChatView(props: ChatViewProps) {
+@@ -2517,20 +2517,40 @@ export default function ChatView(props: ChatViewProps) {
      const usageLimits = activeUsageLimits
        ? { limits: activeUsageLimits, providerName: activeProviderName }
        : null;
@@ -61,18 +61,8 @@ index d7ce16f851..3b07394170 100644
 +        providerThread,
        ),
      };
--  }, [settings.statsForNerdsEnabled, serverProjection, activeUsageLimits, activeProviderName]);
-+  }, [
-+    settings.statsForNerdsEnabled,
-+    settings.providerInstances,
-+    serverProjection,
-+    activeUsageLimits,
-+    activeProviderName,
-+  ]);
-   const pendingBackgroundTasks = useMemo(() => {
-     if (serverProjection === null || serverProjection === undefined) {
-       return [];
-@@ -11425,7 +11451,23 @@ export default function ChatView(props: ChatViewProps) {
+   })();
+@@ -8372,7 +8392,23 @@ export default function ChatView(props: ChatViewProps) {
                      </ComposerSurface.Shell>
                      {/* Opaque so timeline content scrolling under the overlay can't show through the stats line. */}
                      <div className={composerStats !== null ? "bg-background" : undefined}>
