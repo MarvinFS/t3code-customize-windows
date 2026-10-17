@@ -5,6 +5,7 @@ real app: the fake exe name cannot match it and the installer call is intercepte
 
   python test_install_pending.py
 """
+import argparse
 import base64
 import hashlib
 import json
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 from testkit import ASAR, CUSTOMIZE as c, NIGHTLY, REAL, check, scenario
@@ -357,8 +359,31 @@ def headless():
         shutil.rmtree(folder, ignore_errors=True)
 
 
+@scenario('registers the scheduled task with the agent it was given, and stops an agent that hangs')
+def schedule_agent():
+    seen = {}
+    real_powershell, real_timeout, real_agents = c.powershell, c.AGENT_TIMEOUT, dict(c.AGENTS)
+    c.powershell = lambda script, **env: seen.update(env) or subprocess.CompletedProcess([], 0)
+    try:
+        c.cmd_schedule(argparse.Namespace(fix='claude'))
+        check(seen['args'].endswith('build --unattended --fix claude'), f'task arguments: {seen["args"]}')
+        c.cmd_schedule(argparse.Namespace(fix=None))
+        check(seen['args'].endswith('build --unattended'), f'task arguments without an agent: {seen["args"]}')
+        c.AGENTS['claude'] = [sys.executable, '-c', 'import time; time.sleep(60)']
+        c.AGENT_TIMEOUT = 1
+        with tempfile.TemporaryDirectory(prefix='t3agent-test-') as folder, open(Path(folder) / 'agent.log', 'w') as log:
+            c.SOURCE = Path(folder)
+            started = time.time()
+            c.agent_fix('claude', 'problem', 'target', 'version', log)
+            check(time.time() - started < 30, 'waited for a hung agent')
+    finally:
+        c.powershell, c.AGENT_TIMEOUT = real_powershell, real_timeout
+        c.AGENTS.clear()
+        c.AGENTS.update(real_agents)
+
+
 if __name__ == '__main__':
-    for test in (fetches, fetch_refuses, headless):
+    for test in (fetches, fetch_refuses, headless, schedule_agent):
         test()
     for test in (same_version, bad_checksum, nothing_pending, adopts, refuses_mismatch, waits, extracts, prunes, packs,
                  publishes, no_change, installs):

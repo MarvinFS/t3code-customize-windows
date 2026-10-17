@@ -79,6 +79,7 @@ AGENTS = {
     'codex': ['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-'],
 }
 AGENT_NAMES = {'claude': 'Claude Code', 'codex': 'Codex'}
+AGENT_TIMEOUT = 35 * 60  # two attempts plus the checks must fit the scheduled task's 2 hour limit
 GIT_ENV = {'GIT_AUTHOR_NAME': NAME, 'GIT_AUTHOR_EMAIL': NAME + '@localhost',
            'GIT_COMMITTER_NAME': NAME, 'GIT_COMMITTER_EMAIL': NAME + '@localhost',
            'GIT_EDITOR': 'true', 'GIT_SEQUENCE_EDITOR': 'true'}
@@ -798,7 +799,11 @@ def agent_fix(agent, problem, target, version, log):
     step(f'{AGENT_NAMES[agent]} is porting the patches. Transcript: {log.name}')
     log.write('\n--- agent prompt ---\n' + prompt + '\n')
     log.flush()
-    result = subprocess.run(AGENTS[agent], cwd=SOURCE, input=prompt, text=True, stdout=log, stderr=log)
+    try:
+        result = subprocess.run(AGENTS[agent], cwd=SOURCE, input=prompt, text=True, stdout=log, stderr=log, timeout=AGENT_TIMEOUT)
+    except subprocess.TimeoutExpired:  # a hung agent would otherwise hold the lock until the task's time limit kills the run
+        say(f'{AGENT_NAMES[agent]} did not finish in {AGENT_TIMEOUT // 60} minutes; checking what it left.')
+        return
     if result.returncode:
         say(f'{AGENT_NAMES[agent]} exited with {result.returncode}; checking what it left.')
 
@@ -1321,10 +1326,12 @@ def cmd_schedule(args):
         raise Stop('Automatic rebuilds are set up with a Windows scheduled task; on Linux, run it from cron or a systemd timer.')
     gui = Path(sys.executable).with_name('pythonw.exe')
     result = powershell(SCHEDULE, task=TASK, exe=gui if gui.exists() else sys.executable,
-                        args=f'"{REPO / NAME}" build --unattended', dir=REPO)
+                        args=f'"{REPO / NAME}" build --unattended' + (f' --fix {args.fix}' if args.fix else ''), dir=REPO)
     if result.returncode:
         raise Stop('Could not register the scheduled task:\n' + result.stderr)
     say(f'Scheduled task "{TASK}": rebuilds at sign-in and every hour when T3 Code, a downloaded update or the patches changed.')
+    if args.fix:
+        say(f'When a nightly breaks the patches, {AGENT_NAMES[args.fix]} ports them inside the task, with full permissions.')
     say(f'Progress is in {CACHE / "unattended.log"}; run {NAME} status to see the task.')
 
 
@@ -1370,7 +1377,8 @@ def main():
     sub.add_parser('off', help='go back to stock T3 Code')
     sub.add_parser('pack', help='zip the two patched asars of the current build, to extract over T3 Code by hand (Windows)')
     sub.add_parser('verify', help='apply the patches to their base and run the checks (for CI)')
-    sub.add_parser('schedule', help='rebuild automatically after T3 Code updates (Windows scheduled task)')
+    schedule = sub.add_parser('schedule', help='rebuild automatically after T3 Code updates (Windows scheduled task)')
+    schedule.add_argument('--fix', choices=sorted(AGENTS), help='let this agent port the patches inside the task when a nightly breaks them')
     sub.add_parser('unschedule', help='stop the automatic rebuilds')
     sub.add_parser('uninstall', help='remove the launcher, builds and caches')
     if WIN and sys.stdout:

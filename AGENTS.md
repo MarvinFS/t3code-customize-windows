@@ -57,4 +57,4 @@ The same steps apply. Differences:
 - Run the checks from the checkout with `node_modules\.bin\vp.CMD test run <files>` and `node_modules\.bin\tsc-rs.CMD --noEmit -p <package>\tsconfig.json`, or call `node_modules/.bin/vp` from Git Bash.
 - Keep LF line endings: `git config core.autocrlf` must stay `false` in the checkout, and `patches/` is marked `-text` so `git am` sees the exact bytes.
 - Run `python t3code-customize build --resume` (add `--install-dir <folder>` if T3 Code is not under `%LOCALAPPDATA%\Programs`).
-- The scheduled task never starts an agent. Port by hand or run `python t3code-customize --fix claude` yourself; the next unattended run picks up the ported `patches/`.
+- The scheduled task starts an agent only when it was registered with one (`python t3code-customize schedule --fix claude`). Otherwise port by hand or run `python t3code-customize --fix claude` yourself; the next unattended run picks up the ported `patches/`.
