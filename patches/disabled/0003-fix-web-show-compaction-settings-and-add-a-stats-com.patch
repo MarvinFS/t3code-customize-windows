@@ -10,14 +10,14 @@ Subject: [PATCH 3/8] fix(web): show compaction settings and add a stats
  .../components/chat/ComposerStats.logic.ts    | 52 ++++++++++
  .../web/src/components/chat/ComposerStats.tsx | 73 ++++++++++++--
  apps/web/src/lib/contextWindow.test.ts        | 56 ++++++++++-
- apps/web/src/lib/contextWindow.ts             | 12 +--
- 6 files changed, 310 insertions(+), 25 deletions(-)
+ apps/web/src/lib/contextWindow.ts             | 13 +--
+ 6 files changed, 311 insertions(+), 25 deletions(-)
 
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index c4923c7339..1cdef93ab2 100644
+index 89411a508e..196d02bc3a 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -2517,20 +2517,40 @@ export default function ChatView(props: ChatViewProps) {
+@@ -2610,20 +2610,40 @@ export default function ChatView(props: ChatViewProps) {
      const usageLimits = activeUsageLimits
        ? { limits: activeUsageLimits, providerName: activeProviderName }
        : null;
@@ -62,7 +62,7 @@ index c4923c7339..1cdef93ab2 100644
        ),
      };
    })();
-@@ -8372,7 +8392,23 @@ export default function ChatView(props: ChatViewProps) {
+@@ -8673,7 +8693,23 @@ export default function ChatView(props: ChatViewProps) {
                      </ComposerSurface.Shell>
                      {/* Opaque so timeline content scrolling under the overlay can't show through the stats line. */}
                      <div className={composerStats !== null ? "bg-background" : undefined}>
@@ -442,10 +442,10 @@ index 025f57253e..53b81a83a1 100644
                  <p className="text-muted-foreground">
                    Reported{" "}
 diff --git a/apps/web/src/lib/contextWindow.test.ts b/apps/web/src/lib/contextWindow.test.ts
-index e672c36c19..1f92cc1860 100644
+index 8b150ced23..f1c2a57c66 100644
 --- a/apps/web/src/lib/contextWindow.test.ts
 +++ b/apps/web/src/lib/contextWindow.test.ts
-@@ -8,7 +8,7 @@ import {
+@@ -22,7 +22,7 @@ const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage
  
  describe("V2 context window presentation", () => {
    it("uses retained compaction token data when available", () => {
@@ -454,7 +454,7 @@ index e672c36c19..1f92cc1860 100644
        {
          item: {
            id: "compaction-1" as never,
-@@ -22,8 +22,8 @@ describe("V2 context window presentation", () => {
+@@ -36,8 +36,8 @@ describe("V2 context window presentation", () => {
            ordinal: 1,
            status: "completed",
            title: null,
@@ -465,7 +465,7 @@ index e672c36c19..1f92cc1860 100644
            updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
            type: "compaction",
            driver: null,
-@@ -31,9 +31,19 @@ describe("V2 context window presentation", () => {
+@@ -45,9 +45,19 @@ describe("V2 context window presentation", () => {
            afterTokenCount: 2_000,
          },
        },
@@ -487,8 +487,8 @@ index e672c36c19..1f92cc1860 100644
    });
  
    it("prefers current provider usage and preserves ACP cost", () => {
-@@ -109,3 +119,39 @@ describe("latestProviderTurnTokenUsage", () => {
-     expect(latest?.usedTokens).toBe(300_000);
+@@ -254,3 +264,39 @@ describe("latestProviderTurnTokenUsage", () => {
+     }
    });
  });
 +
@@ -528,21 +528,22 @@ index e672c36c19..1f92cc1860 100644
 +  });
 +});
 diff --git a/apps/web/src/lib/contextWindow.ts b/apps/web/src/lib/contextWindow.ts
-index e64525e7e9..5bad05664c 100644
+index 23ed466e3b..56c1cc401b 100644
 --- a/apps/web/src/lib/contextWindow.ts
 +++ b/apps/web/src/lib/contextWindow.ts
-@@ -73,8 +73,8 @@ export function deriveLatestContextWindowSnapshot(
+@@ -89,8 +89,9 @@ export function deriveLatestContextWindowSnapshot(
        lastReasoningOutputTokens: null,
        toolUses: null,
        durationMs: null,
 -      compactsAutomatically: true,
--      autoCompactThreshold: null,
+-      autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
 +      compactsAutomatically: providerThread?.contextUsage?.compactsAutomatically ?? null,
-+      autoCompactThreshold: providerThread?.contextUsage?.autoCompactThreshold ?? null,
++      autoCompactThreshold:
++        liveUsage.autoCompactThreshold ?? providerThread?.contextUsage?.autoCompactThreshold ?? null,
        cost: null,
        updatedAt: liveUsage.updatedAt,
      };
-@@ -116,7 +116,7 @@ export function deriveLatestContextWindowSnapshot(
+@@ -132,7 +133,7 @@ export function deriveLatestContextWindowSnapshot(
    }
    for (let index = entries.length - 1; index >= 0; index -= 1) {
      const entry = entries[index];
@@ -551,7 +552,7 @@ index e64525e7e9..5bad05664c 100644
        continue;
      }
      const payload = entry.item;
-@@ -134,7 +134,7 @@ export function deriveLatestContextWindowSnapshot(
+@@ -150,7 +151,7 @@ export function deriveLatestContextWindowSnapshot(
  
      return {
        usedTokens,
@@ -560,7 +561,7 @@ index e64525e7e9..5bad05664c 100644
        maxTokens,
        remainingTokens,
        usedPercentage,
-@@ -150,10 +150,10 @@ export function deriveLatestContextWindowSnapshot(
+@@ -166,10 +167,10 @@ export function deriveLatestContextWindowSnapshot(
        lastReasoningOutputTokens: null,
        toolUses: null,
        durationMs: null,

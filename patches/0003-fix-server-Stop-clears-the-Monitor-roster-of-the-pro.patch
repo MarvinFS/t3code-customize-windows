@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Sun, 11 Oct 2026 22:15:56 +0300
-Subject: [PATCH 4/8] fix(server): Stop clears the Monitor roster of the
+Subject: [PATCH 3/6] fix(server): Stop clears the Monitor roster of the
  provider thread it interrupted
 
 Stop on a settled thread closes the provider process and then settles what
@@ -18,28 +18,28 @@ settleBackgroundWork already treats the stopped provider thread as dead for
 turn items; do the same for its roster.
 ---
  .../BackgroundWorkStop.integration.test.ts    | 39 +++++++++++++++++++
- .../src/orchestration-v2/Orchestrator.ts      |  6 ++-
- 2 files changed, 44 insertions(+), 1 deletion(-)
+ 1 file changed, 39 insertions(+)
 
 diff --git a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
-index 24521561f1..2d88c7690f 100644
+index e59ad3da7c..90d43bdad5 100644
 --- a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
 +++ b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
-@@ -40,11 +40,13 @@ const stopEarlierBackgroundWork = ({
-   olderStart = false,
+@@ -41,12 +41,14 @@ const stopEarlierBackgroundWork = ({
+   backgroundWorkAfterStop,
    stalledRun,
    workflowMember = false,
 +  monitorRoster = false,
  }: {
    readonly failedStart?: boolean;
+   readonly backgroundWorkAfterStop?: "running" | "unknown";
    readonly stopWithQueue?: "thread.stop" | "run.interrupt";
    readonly olderStart?: boolean;
    readonly workflowMember?: boolean;
 +  readonly monitorRoster?: boolean;
-   readonly stalledRun?:
-     | "missing-session"
-     | "missing-session-terminal"
-@@ -840,6 +842,30 @@ const stopEarlierBackgroundWork = ({
+   readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
+ }) =>
+   Effect.scoped(
+@@ -893,6 +895,30 @@ const stopEarlierBackgroundWork = ({
            });
          }
  
@@ -70,7 +70,7 @@ index 24521561f1..2d88c7690f 100644
          yield* orchestrator.dispatch(
            stopWithQueue === "thread.stop"
              ? {
-@@ -869,6 +895,14 @@ const stopEarlierBackgroundWork = ({
+@@ -924,6 +950,14 @@ const stopEarlierBackgroundWork = ({
            ],
          );
          const after = yield* orchestrator.getThreadProjection(threadId);
@@ -85,8 +85,8 @@ index 24521561f1..2d88c7690f 100644
          if (olderStart) {
            assert.equal(
              after.runs.find((run) => run.id === watcherRun.runId)?.status,
-@@ -931,6 +965,11 @@ it.effect(
-   () => stopEarlierBackgroundWork({ failedStart: true }),
+@@ -1002,6 +1036,11 @@ it.effect("Stop preserves the roster when the background work probe fails", () =
+   stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
  );
  
 +it.effect(
@@ -97,22 +97,3 @@ index 24521561f1..2d88c7690f 100644
  it.effect.each(["thread.stop", "run.interrupt"] as const)(
    "%s stops background work when a later message is queued",
    (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType }),
-diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
-index 1499ca975d..3d7a51e087 100644
---- a/apps/server/src/orchestration-v2/Orchestrator.ts
-+++ b/apps/server/src/orchestration-v2/Orchestrator.ts
-@@ -8458,9 +8458,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
-         }
-       }
-       for (const providerThread of input.projection.providerThreads) {
-+        // A live process owns its roster and reports clearing it. The stopped
-+        // thread's process is gone, and its clearing write is dropped when a
-+        // later run already owns lastRunOrdinal, so Stop clears the roster.
-         if (
-           (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 ||
--          (yield* hasLiveSession(providerThread.id))
-+          (providerThread.id !== input.stoppedProviderThreadId &&
-+            (yield* hasLiveSession(providerThread.id)))
-         ) {
-           continue;
-         }

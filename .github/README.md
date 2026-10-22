@@ -30,13 +30,12 @@ Everything else is stock T3 Code, including T3 Connect and the mobile app.
 |---|---|---|
 | 0001 | Stats for Nerds: response throughput and the composer stats line | btsouth |
 | 0002 | Usage limits: background polling, reset-aware merging and fetch-time ordering | btsouth |
-| 0003 | Compaction settings and a stats Compact action | btsouth |
-| 0004 | Suggest the same model on a subscription with more room | btsouth |
-| 0004 | Stop clears the Monitor roster of the interrupted provider thread | this repo |
-| 0005 | Each Claude skill load as its own timeline row | this repo |
+| 0003 | Stop clears the Monitor roster of the interrupted provider thread | this repo |
+| 0004 | Each Claude skill load as its own timeline row | this repo |
 | 0005 | Tests expect Windows file modes, so two limits tests run on Windows | btsouth |
+| 0006 | The Claude wake test harness stays out of the host's `~/.claude` | this repo |
 
-Two numbers appear twice because btsouth and this repo each added a 0004 and a 0005. The tool applies the patches in file-name order and renumbers them when it writes ported patches back.
+btsouth's compaction settings patch is kept in `patches/disabled/` and not applied, because T3 Code now has its own Compact button and auto-compact threshold. The tool applies the patches in file-name order and renumbers them when it writes ported patches back.
 
 When a nightly moves the code a patch touches, the patches are ported here and `patches/base.txt` records the upstream commit they apply to.
 
@@ -66,8 +65,8 @@ Copy the two original files from `resources` somewhere first if you want a way b
 
 The tool applies the patches to the exact upstream commit of your installed nightly, then runs what `checks.json` lists:
 
-- 18 test files through `vp test run`.
-- A typecheck of 8 packages through `tsc-rs --noEmit`. `tsc-rs` is Theo Browne's Rust port of the TypeScript 7 compiler. T3 Code already depends on it, and its own package scripts call it.
+- 17 test files through `vp test run`.
+- A typecheck of 8 packages through `tsc --noEmit`. In T3 Code's checkout `tsc` is tsc-rs, Theo Browne's Rust port of the TypeScript 7 compiler, which T3 Code's own package scripts call.
 
 Two tests may fail on Windows: one looks for a Unix path (it passes on the current nightly), and one upstream test times out. `checks.windows.json` lists each with its reason, and a build continues when only those fail. Any other failure stops the build and leaves your installed T3 Code alone.
 
