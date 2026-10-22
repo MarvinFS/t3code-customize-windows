@@ -121,7 +121,7 @@ def step(message):
 
 def resolve(args, env=None):
     if WIN:
-        # CreateProcess does not resolve .cmd shims (pnpm, vp, tsc-rs) by bare name, and npm leaves an
+        # CreateProcess does not resolve .cmd shims (pnpm, vp, tsc) by bare name, and npm leaves an
         # extensionless shell script next to each, which which() would return first.
         search = (env or os.environ).get('PATH')
         args = [next((found for suffix in ('.exe', '.cmd', '') if (found := shutil.which(str(args[0]) + suffix, path=search))),
@@ -712,7 +712,7 @@ def checks(env, log):
         report.unlink(missing_ok=True)
         tests += ['--reporter=default', '--reporter=json', f'--outputFile.json={report}']
     steps = [(tests, 'The patch tests failed.')]
-    steps += [(['tsc-rs', '--noEmit', '-p', p + '/tsconfig.json'], f'Typecheck failed in {p}.') for p in spec['typecheck']]
+    steps += [(['tsc', '--noEmit', '-p', p + '/tsconfig.json'], f'Typecheck failed in {p}.') for p in spec['typecheck']]
     # They only read the checkout, so they all run at once; each one's output goes to the log in order afterwards.
     started = []
     for args, _ in steps:
@@ -792,9 +792,15 @@ def choose_agent(requested):
 
 
 def agent_fix(agent, problem, target, version, log):
+    spec = json.loads((REPO / 'checks.json').read_text(encoding='utf-8'))
+    # Spelled out: an agent left to AGENTS.md ran the whole monorepo suite once and held the build for 15+ minutes.
+    commands = ''.join(f'  {c}\n' for c in [' '.join(['node_modules/.bin/vp', 'test', 'run', *spec['tests']])]
+                       + [f'node_modules/.bin/tsc --noEmit -p {p}/tsconfig.json' for p in spec['typecheck']])
     prompt = (f'Follow {REPO}/AGENTS.md to port the T3 Code customization patches.\n\n'
               f'Source checkout: {SOURCE}\nNightly: {version} at commit {target}\n'
               f'Patch repo: {REPO}\n\nThe build stopped with:\n\n{problem}\n\n'
+              f'The checks are exactly these commands, run from the source checkout. Never run vp test without the file list:\n'
+              f'{commands}\n'
               f'When the checks pass, stop. Do not run the build yourself; {NAME} continues it.\n')
     step(f'{AGENT_NAMES[agent]} is porting the patches. Transcript: {log.name}')
     log.write('\n--- agent prompt ---\n' + prompt + '\n')

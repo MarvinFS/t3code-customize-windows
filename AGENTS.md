@@ -39,7 +39,7 @@ feature can't be ported sensibly, stop and explain why.
 
 If `t3code-customize` started you, stop once the tests and typechecks in `checks.json`
 pass (run them from the source checkout with `node_modules/.bin/vp test run <files>` and
-`node_modules/.bin/tsc-rs --noEmit -p <package>/tsconfig.json`). It continues the build itself.
+`node_modules/.bin/tsc --noEmit -p <package>/tsconfig.json`). It continues the build itself.
 
 Otherwise run the same Python entry with `build --resume`. It reruns the checks on the checkout as you
 left it, builds, installs the result and writes the ported commits back to
@@ -54,7 +54,7 @@ checks and real desktop startup evidence.
 The same steps apply. Differences:
 
 - The source checkout is `%LOCALAPPDATA%\t3code-customize\cache\t3code`, logs are in `...\cache\logs`.
-- Run the checks from the checkout with `node_modules\.bin\vp.CMD test run <files>` and `node_modules\.bin\tsc-rs.CMD --noEmit -p <package>\tsconfig.json`, or call `node_modules/.bin/vp` from Git Bash.
+- Run the checks from the checkout with `node_modules\.bin\vp.CMD test run <files>` and `node_modules\.bin\tsc.CMD --noEmit -p <package>\tsconfig.json`, or call `node_modules/.bin/vp` from Git Bash.
 - Keep LF line endings: `git config core.autocrlf` must stay `false` in the checkout, and `patches/` is marked `-text` so `git am` sees the exact bytes.
 - Run `python t3code-customize build --resume` (add `--install-dir <folder>` if T3 Code is not under `%LOCALAPPDATA%\Programs`).
 - The scheduled task starts an agent only when it was registered with one (`python t3code-customize schedule --fix claude`). Otherwise port by hand or run `python t3code-customize --fix claude` yourself; the next unattended run picks up the ported `patches/`.
