@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Thu, 8 Oct 2026 22:05:20 -0400
-Subject: [PATCH 2/6] Usage limits: background polling, reset-aware merging and
+Subject: [PATCH 2/7] Usage limits: background polling, reset-aware merging and
  fetch-time ordering
 
 ---
@@ -13,7 +13,7 @@ Subject: [PATCH 2/6] Usage limits: background polling, reset-aware merging and
  .../src/provider/claudeUsageLimits.test.ts    | 165 +++++-
  apps/server/src/provider/claudeUsageLimits.ts | 140 ++++-
  .../src/provider/codexUsageLimits.test.ts     |  22 +-
- apps/server/src/provider/codexUsageLimits.ts  |  14 +-
+ apps/server/src/provider/codexUsageLimits.ts  |  16 +-
  apps/server/src/usage/cliproxyApi.ts          |   1 +
  packages/contracts/src/providerUsageLimits.ts |  10 +
  .../src/server/managedProvider.test.ts        | 223 +++++++-
@@ -23,13 +23,13 @@ Subject: [PATCH 2/6] Usage limits: background polling, reset-aware merging and
  .../provider-cursor/src/server/usageLimits.ts |   1 +
  .../provider-grok/src/server/usageLimits.ts   |   1 +
  .../src/server/usageLimits.ts                 |   3 +
- 18 files changed, 1777 insertions(+), 82 deletions(-)
+ 18 files changed, 1778 insertions(+), 83 deletions(-)
 
 diff --git a/apps/server/src/provider/CodexProvider.ts b/apps/server/src/provider/CodexProvider.ts
-index 8458315f64..3b286f7a55 100644
+index 2b2d550188..fde2523962 100644
 --- a/apps/server/src/provider/CodexProvider.ts
 +++ b/apps/server/src/provider/CodexProvider.ts
-@@ -56,6 +56,7 @@ const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
+@@ -57,6 +57,7 @@ const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
  
  type CodexRateLimitsProbe =
    | {
@@ -37,7 +37,7 @@ index 8458315f64..3b286f7a55 100644
        readonly snapshot: CodexRateLimitSnapshot;
        readonly rateLimitsByLimitId?:
          | Readonly<Record<string, CodexRateLimitSnapshot>>
-@@ -563,15 +564,18 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
+@@ -564,15 +565,18 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
              deadlineMs,
              RATE_LIMITS_PROBE_TIMEOUT_MS,
            ).pipe(
@@ -60,7 +60,7 @@ index 8458315f64..3b286f7a55 100644
              ),
              Effect.catch((error) =>
                Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
-@@ -794,7 +798,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
+@@ -795,7 +799,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
              snapshot: snapshot.rateLimits.snapshot,
              rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
              resetCredits: snapshot.rateLimits.resetCredits,
@@ -1340,7 +1340,7 @@ index d0acf43bb4..247dade1d5 100644
 +    : undefined;
 +}
 diff --git a/apps/server/src/provider/codexUsageLimits.test.ts b/apps/server/src/provider/codexUsageLimits.test.ts
-index 934412bd3b..67e5d43d05 100644
+index 9c863f54c0..a505235c16 100644
 --- a/apps/server/src/provider/codexUsageLimits.test.ts
 +++ b/apps/server/src/provider/codexUsageLimits.test.ts
 @@ -35,8 +35,10 @@ describe("codexRateLimitsToLimits", () => {
@@ -1405,7 +1405,7 @@ index 934412bd3b..67e5d43d05 100644
          usedPercent: 42,
          windowDurationMins: 10080,
        },
-@@ -139,6 +145,7 @@ describe("codexRateLimitsToUpdate", () => {
+@@ -162,6 +168,7 @@ describe("codexRateLimitsToUpdate", () => {
            id: "secondary",
            kind: "weekly",
            label: "Weekly",
@@ -1413,7 +1413,7 @@ index 934412bd3b..67e5d43d05 100644
            usedPercent: 51,
            windowDurationMins: 10080,
          },
-@@ -166,6 +173,7 @@ describe("codexRateLimitsToUpdate", () => {
+@@ -189,6 +196,7 @@ describe("codexRateLimitsToUpdate", () => {
          id: "secondary",
          kind: "weekly",
          label: "Weekly",
@@ -1421,7 +1421,7 @@ index 934412bd3b..67e5d43d05 100644
          usedPercent: 42,
          windowDurationMins: 10080,
        },
-@@ -203,6 +211,7 @@ describe("mergeCodexRateLimits", () => {
+@@ -226,6 +234,7 @@ describe("mergeCodexRateLimits", () => {
            id: "primary",
            kind: "session",
            label: "Session",
@@ -1429,7 +1429,7 @@ index 934412bd3b..67e5d43d05 100644
            usedPercent: 12,
            windowDurationMins: 300,
          },
-@@ -210,6 +219,7 @@ describe("mergeCodexRateLimits", () => {
+@@ -233,6 +242,7 @@ describe("mergeCodexRateLimits", () => {
            id: "individual",
            kind: "monthly",
            label: "Monthly credit limit",
@@ -1438,7 +1438,7 @@ index 934412bd3b..67e5d43d05 100644
            resetsAt: "2026-08-17T20:53:20.000Z",
          },
 diff --git a/apps/server/src/provider/codexUsageLimits.ts b/apps/server/src/provider/codexUsageLimits.ts
-index f8718cdda0..38a6b867b4 100644
+index d4f9c62111..ac65395da2 100644
 --- a/apps/server/src/provider/codexUsageLimits.ts
 +++ b/apps/server/src/provider/codexUsageLimits.ts
 @@ -59,6 +59,7 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
@@ -1477,16 +1477,19 @@ index f8718cdda0..38a6b867b4 100644
    return {
      ...makeUsageLimits({
        checkedAt: input.checkedAt,
-@@ -136,7 +142,7 @@ export function codexRateLimitsToLimits(input: {
- export function codexRateLimitsToUpdate(
+@@ -137,9 +143,9 @@ export function codexRateLimitsToUpdate(
    snapshot: CodexRateLimitSnapshot,
+   previous?: CodexRateLimitSnapshot,
  ): ProviderUsageLimitsUpdate | undefined {
--  const windows = codexRateLimitsToWindows(snapshot);
-+  const windows = codexRateLimitsToWindows(snapshot, "turn");
-   return windows.length > 0 ? { windows } : undefined;
- }
- 
-@@ -179,7 +185,9 @@ export function codexUsageLimitResetAt(
+-  const previousWindows = previous ? codexRateLimitsToWindows(previous) : [];
++  const previousWindows = previous ? codexRateLimitsToWindows(previous, "turn") : [];
+   // Token ticks repeat session-cached limits that may predate an account probe or reset.
+-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => {
++  const windows = codexRateLimitsToWindows(snapshot, "turn").filter((window) => {
+     const existing = previousWindows.find((candidate) => candidate.id === window.id);
+     return (
+       !existing ||
+@@ -191,7 +197,9 @@ export function codexUsageLimitResetAt(
    snapshot: CodexRateLimitSnapshot | undefined,
  ): string | null {
    if (!snapshot) return null;

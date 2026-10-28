@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: MarvinFS <MarvinFS@users.noreply.github.com>
 Date: Sat, 17 Oct 2026 22:04:15 +0300
-Subject: [PATCH 6/6] fix(tests): keep the Claude wake harness out of the
+Subject: [PATCH 6/7] fix(tests): keep the Claude wake harness out of the
  host's ~/.claude
 
 The harness left CLAUDE_CONFIG_DIR unset, so every steer and turn scanned the real ~/.claude/skills. On a machine with many skills that read outlasts the tick budget of the "never answers" steer test, which then waits forever on a timeout nothing advances. The harness now points CLAUDE_CONFIG_DIR at an empty temp directory.

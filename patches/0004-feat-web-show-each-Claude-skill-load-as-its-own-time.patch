@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Tue, 13 Oct 2026 10:49:34 +0300
-Subject: [PATCH 4/6] feat(web): show each Claude skill load as its own
+Subject: [PATCH 4/7] feat(web): show each Claude skill load as its own
  timeline row
 
 A Skill tool call was folded into the surrounding tool group, so a loaded
@@ -21,7 +21,7 @@ to expand and stays visible when a finished turn folds its work.
  4 files changed, 193 insertions(+), 2 deletions(-)
 
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-index dfc9c31fb3..705cc685bf 100644
+index 3ee079809f..f7f3d46f30 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
 @@ -17,6 +17,7 @@ import {
@@ -141,7 +141,7 @@ index dfc9c31fb3..705cc685bf 100644
      const fixture = makeStreamingTimelineFixture();
      const [history0, history1, history2, liveUser, , liveAssistant] = fixture.visibleTurnItems;
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.ts b/apps/web/src/components/chat/MessagesTimeline.logic.ts
-index f771c1ed0d..53039f287b 100644
+index 4ea9e852ed..0fdede62c3 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.ts
 @@ -65,7 +65,7 @@ import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentatio
@@ -168,7 +168,7 @@ index f771c1ed0d..53039f287b 100644
  function singleToolCallLabel(entry: WorkLogEntry): string {
    if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
    const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
-@@ -581,6 +589,14 @@ type MessagesTimelineRowContent =
+@@ -583,6 +591,14 @@ type MessagesTimelineRowContent =
        /** The provider's reason, when a failed compaction gave one. */
        failure?: string;
      }
@@ -183,7 +183,7 @@ index f771c1ed0d..53039f287b 100644
    | {
        kind: "message";
        id: string;
-@@ -1089,6 +1105,7 @@ function deriveTurnFolds(input: {
+@@ -1110,6 +1126,7 @@ function deriveTurnFolds(input: {
        if (
          isCompaction ||
          timelineEntryIsPersistentResourceCard(entry) ||
@@ -191,7 +191,7 @@ index f771c1ed0d..53039f287b 100644
          input.liveSubagentEntryIds.has(entry.id) ||
          input.completeSupersededReplyEntryIds.has(entry.id)
        ) {
-@@ -1466,6 +1483,7 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1490,6 +1507,7 @@ export function deriveMessagesTimelineRows(input: {
          isPendingApproval(entry.entry) ||
          !runIdIsActiveResponse(entry.entry.runId) ||
          entry.entry.sourceActivityKind === "context-compaction" ||
@@ -199,7 +199,7 @@ index f771c1ed0d..53039f287b 100644
          collapsedEntryIds.has(entry.id) ||
          collapsedSupersededEntryIds.has(entry.id) ||
          foldsByAnchorEntryId.has(entry.id) ||
-@@ -1734,6 +1752,25 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1768,6 +1786,25 @@ export function deriveMessagesTimelineRows(input: {
        continue;
      }
  
@@ -225,7 +225,7 @@ index f771c1ed0d..53039f287b 100644
      if (timelineEntry.kind === "work") {
        if (
          isPendingApproval(timelineEntry.entry) ||
-@@ -1763,6 +1800,7 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1797,6 +1834,7 @@ export function deriveMessagesTimelineRows(input: {
            !nextEntry ||
            nextEntry.kind !== "work" ||
            nextEntry.entry.sourceActivityKind === "context-compaction" ||
@@ -233,7 +233,7 @@ index f771c1ed0d..53039f287b 100644
            nextEntry.entry.tone === "error" ||
            nextEntry.entry.sourceActivityKind === "runtime.error" ||
            nextEntry.entry.itemType === "system_notice" ||
-@@ -2347,6 +2385,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
+@@ -2385,6 +2423,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
        );
      }
  
@@ -251,10 +251,10 @@ index f771c1ed0d..53039f287b 100644
        return a.proposedPlan === (b as typeof a).proposedPlan;
  
 diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
-index a166a25e47..b1d8b16be7 100644
+index a9cab1554a..61080d4960 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.tsx
 +++ b/apps/web/src/components/chat/MessagesTimeline.tsx
-@@ -98,6 +98,7 @@ import {
+@@ -103,6 +103,7 @@ import {
    type TimelineRow,
  } from "./timelineRowContext";
  import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
@@ -262,7 +262,7 @@ index a166a25e47..b1d8b16be7 100644
  import {
    WorkGroupSection,
    WorkingTimelineRow,
-@@ -1471,6 +1472,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -1439,6 +1440,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                  row.kind === "worktree-setup" ||
                  row.kind === "event" ||
                  row.kind === "attempt-fold" ||
@@ -270,15 +270,15 @@ index a166a25e47..b1d8b16be7 100644
                  row.kind === "html-render" ||
                  row.kind === "mcp-app"
                ? "pb-2"
-@@ -1514,6 +1516,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
-       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+@@ -1482,6 +1484,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+       {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
        {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
        {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
 +      {row.kind === "skill" ? <SkillTimelineRow row={row} /> : null}
        {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
        {row.kind === "message" && row.message.role === "assistant" ? (
          <AssistantTimelineRow row={row} />
-@@ -1603,6 +1606,44 @@ function ContextCompactionTimelineRow({
+@@ -1626,6 +1629,44 @@ function WorkHistorySkeleton() {
    );
  }
  
@@ -322,7 +322,7 @@ index a166a25e47..b1d8b16be7 100644
 +
  function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
    const ctx = use(TimelineRowCtx);
- 
+   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
 diff --git a/apps/web/src/components/chat/SkillInlineText.tsx b/apps/web/src/components/chat/SkillInlineText.tsx
 index 59fb9d141e..dfd9e99808 100644
 --- a/apps/web/src/components/chat/SkillInlineText.tsx

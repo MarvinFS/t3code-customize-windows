@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: t3code-customize <t3code-customize@localhost>
 Date: Sun, 11 Oct 2026 22:15:56 +0300
-Subject: [PATCH 3/6] fix(server): Stop clears the Monitor roster of the
+Subject: [PATCH 3/7] fix(server): Stop clears the Monitor roster of the
  provider thread it interrupted
 
 Stop on a settled thread closes the provider process and then settles what

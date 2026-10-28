@@ -340,7 +340,7 @@ index 0000000000..e5b86004ab
 +  return parseRtkGain(output, localIsoDate(now, DateTime.zoneMakeLocal()));
 +});
 diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
-index e35aaf1bb9..31115b5761 100644
+index e1d6303b23..265456c32f 100644
 --- a/apps/server/src/ws.ts
 +++ b/apps/server/src/ws.ts
 @@ -232,6 +232,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -351,7 +351,7 @@ index e35aaf1bb9..31115b5761 100644
  import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
  import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
  import type { TelemetryOwner } from "./telemetry/Identify.ts";
-@@ -2523,6 +2524,7 @@ export const layerWsRpc = (
+@@ -2524,6 +2525,7 @@ export const layerWsRpc = (
            resourceTelemetry.readHistory(input),
          [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
          [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
@@ -360,10 +360,10 @@ index e35aaf1bb9..31115b5761 100644
          [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
          [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index 671a144723..2f38cb9da1 100644
+index 25ceb01da1..900fe41e8b 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -3695,7 +3695,9 @@ export default function ChatView(props: ChatViewProps) {
+@@ -3628,7 +3628,9 @@ export default function ChatView(props: ChatViewProps) {
                      </ComposerSurface.Shell>
                      {/* Opaque so timeline content scrolling under the overlay can't show through the stats line. */}
                      <div className={composerStats !== null ? "bg-background" : undefined}>

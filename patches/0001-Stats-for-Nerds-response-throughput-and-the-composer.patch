@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyler South <tsouth2@gmail.com>
 Date: Thu, 8 Oct 2026 22:05:19 -0400
-Subject: [PATCH 1/6] Stats for Nerds: response throughput and the composer
+Subject: [PATCH 1/7] Stats for Nerds: response throughput and the composer
  stats line
 
 ---
@@ -1021,16 +1021,17 @@ index 69fca8c082..1ffef970da 100644
      Effect.scoped(
        Effect.gen(function* () {
 diff --git a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
-index 36702689be..f5c235359d 100644
+index 58cd4a0c0c..5b3ee26a55 100644
 --- a/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
 +++ b/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
-@@ -1,4 +1,5 @@
+@@ -1,5 +1,6 @@
+ import { pipe } from "effect/Function";
  import * as DocumentText from "../../provider/DocumentText.ts";
 +import { CodexResponseThroughput } from "./CodexResponseThroughput.ts";
  import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
  import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
  import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-@@ -23,6 +24,7 @@ import {
+@@ -24,6 +25,7 @@ import {
  } from "../../provider/CodexProvider.ts";
  import {
    codexRateLimitsToUpdate,
@@ -1038,7 +1039,7 @@ index 36702689be..f5c235359d 100644
    mergeCodexRateLimits,
    codexUsageLimitResetAt,
    type CodexRateLimitSnapshot,
-@@ -71,6 +73,7 @@ import type {
+@@ -72,6 +74,7 @@ import type {
    ProviderThreadId,
    ProviderTurnId,
    ProviderInstanceId,
@@ -1046,7 +1047,7 @@ index 36702689be..f5c235359d 100644
    RuntimeMode,
    ThreadId,
  } from "@t3tools/contracts";
-@@ -1107,6 +1110,7 @@ interface ActiveCodexTurnContext {
+@@ -1108,6 +1111,7 @@ interface ActiveCodexTurnContext {
    capacityRetryAttempt?: number;
    capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
    closedCommandItemIds?: ReadonlySet<string>;
@@ -1054,7 +1055,7 @@ index 36702689be..f5c235359d 100644
    latestProviderFailure?: {
      readonly nativeMessage: string;
      readonly nativeCode: string | null;
-@@ -1544,7 +1548,10 @@ export type CodexAdapterV2DriverEnv =
+@@ -1548,7 +1552,10 @@ export type CodexAdapterV2DriverEnv =
  
  export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
    { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
@@ -1066,7 +1067,7 @@ index 36702689be..f5c235359d 100644
  ) {
    const clientFactory = yield* CodexAppServerClientFactory;
    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-@@ -1589,6 +1596,9 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
+@@ -1593,6 +1600,9 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
  });
  
  export interface CodexAdapterV2Options {
@@ -1076,7 +1077,7 @@ index 36702689be..f5c235359d 100644
    readonly instanceId: ProviderInstanceId;
    readonly settings: CodexSettings;
    readonly environment: NodeJS.ProcessEnv;
-@@ -1719,6 +1729,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -1723,6 +1733,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
              yield* Ref.set(initialized, true);
            }),
          );
@@ -1100,7 +1101,7 @@ index 36702689be..f5c235359d 100644
          const now = yield* DateTime.now;
          const session = providerSession({
            providerSessionId: input.providerSessionId,
-@@ -1954,6 +1981,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -1958,6 +1985,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
              itemParentNodeId: input.turnInput.rootNodeId,
              rootNodeId: input.turnInput.rootNodeId,
              subagent: null,
@@ -1110,7 +1111,7 @@ index 36702689be..f5c235359d 100644
              startedAt: input.startedAt,
              itemPositions: new Map(),
              fileChangeKindsByItem: new Map(),
-@@ -3293,12 +3323,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -3297,12 +3327,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
            return key;
          };
          const appendReasoning = Effect.fn("CodexAdapterV2.appendReasoning")(function* (
@@ -1127,7 +1128,7 @@ index 36702689be..f5c235359d 100644
            yield* completeProviderRetry(context, yield* DateTime.now);
            const itemId = reasoningPartKey(payload.turnId, payload.itemId, stream, index);
            // Reserve positions before delayed flushes so later tools stay after them.
-@@ -4024,6 +4057,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4028,6 +4061,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
            readonly appName?: string;
            readonly options?: ReadonlyArray<ProviderApprovalOption>;
          }) {
@@ -1135,7 +1136,7 @@ index 36702689be..f5c235359d 100644
            const createdAt = yield* DateTime.now;
            const { owner, subagent } = approvalOwnerCodexTurn(input.context);
            const parentNodeId =
-@@ -4119,6 +4153,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4123,6 +4157,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
            readonly questions: ReadonlyArray<CodexSchema.ToolRequestUserInputParams__ToolRequestUserInputQuestion>;
            readonly responseMode?: "message";
          }) {
@@ -1143,7 +1144,7 @@ index 36702689be..f5c235359d 100644
            const createdAt = yield* DateTime.now;
            const requestId = yield* idAllocator.allocate.runtimeRequest({
              driver: CODEX_PROVIDER,
-@@ -4208,10 +4243,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4212,10 +4247,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
            return { node, request, turnItem };
          });
  
@@ -1162,7 +1163,7 @@ index 36702689be..f5c235359d 100644
                yield* completeProviderRetry(context, yield* DateTime.now);
              }
              yield* agentMessageDeltas.append({
-@@ -4219,8 +4260,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4223,8 +4264,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                itemId: payload.itemId,
                delta: payload.delta,
              });
@@ -1173,7 +1174,7 @@ index 36702689be..f5c235359d 100644
  
          yield* client.handleServerNotification("item/commandExecution/outputDelta", (payload) =>
            Effect.gen(function* () {
-@@ -4243,33 +4284,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4247,33 +4288,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
          );
  
          yield* client.handleServerNotification("item/reasoning/summaryTextDelta", (payload) =>
@@ -1223,7 +1224,7 @@ index 36702689be..f5c235359d 100644
              yield* completeProviderRetry(context, yield* DateTime.now);
              const steps = payload.plan.map((step, index) => ({
                id: `step-${index + 1}`,
-@@ -4299,8 +4348,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4303,8 +4352,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                driver: CODEX_PROVIDER,
                turnItem: artifacts.turnItem,
              });
@@ -1234,7 +1235,7 @@ index 36702689be..f5c235359d 100644
  
          yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
            Effect.gen(function* () {
-@@ -4332,6 +4381,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4336,6 +4385,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
            }).pipe(Effect.orDie),
          );
  
@@ -1264,7 +1265,7 @@ index 36702689be..f5c235359d 100644
          yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
            Effect.gen(function* () {
              accumulateCodexTurnTokenUsage(
-@@ -4635,13 +4707,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4639,13 +4711,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
            }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
          );
  
@@ -1284,7 +1285,7 @@ index 36702689be..f5c235359d 100644
              if (payload.item.type === "contextCompaction") {
                yield* emitCompactionItem(
                  context,
-@@ -4765,11 +4841,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4769,11 +4845,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                driver: CODEX_PROVIDER,
                turnItem: artifacts.turnItem,
              });
@@ -1301,7 +1302,7 @@ index 36702689be..f5c235359d 100644
              if (payload.item.type === "contextCompaction")
                // Fork requests off the notification reader so it can read their responses.
                yield* restoreAdditionalContext(payload.threadId).pipe(
-@@ -4795,6 +4872,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -4799,6 +4876,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                return;
              }
              const { context, settled } = resolved;
@@ -1314,7 +1315,7 @@ index 36702689be..f5c235359d 100644
  
              if (payload.item.type === "reasoning") {
                yield* completeReasoning(payload.turnId, payload.item);
-@@ -5068,8 +5151,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -5072,8 +5155,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                  result: text,
                });
              }
@@ -1325,7 +1326,7 @@ index 36702689be..f5c235359d 100644
  
          yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
            Effect.gen(function* () {
-@@ -5905,6 +5988,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -5909,6 +5992,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                    input.completedAt,
                  );
                }
@@ -1341,7 +1342,7 @@ index 36702689be..f5c235359d 100644
                const nativeThreadId = input.context.providerThread.nativeThreadRef?.nativeId;
                const activation =
                  nativeThreadId == null ? undefined : goalActivations.get(nativeThreadId);
-@@ -5929,14 +6021,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
+@@ -5933,14 +6025,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                  status: input.status,
                  startedAt: input.context.startedAt,
                  completedAt: input.completedAt,
@@ -1724,10 +1725,10 @@ index 0000000000..1df8c44435
 +  }
 +}
 diff --git a/apps/server/src/orchestration-v2/ProjectionStore.test.ts b/apps/server/src/orchestration-v2/ProjectionStore.test.ts
-index 5bca01a57f..59e308f53b 100644
+index 2af87ecf4f..88f1b9fc90 100644
 --- a/apps/server/src/orchestration-v2/ProjectionStore.test.ts
 +++ b/apps/server/src/orchestration-v2/ProjectionStore.test.ts
-@@ -1479,6 +1479,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
+@@ -1480,6 +1480,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
          outputTokens: 1_000,
          updatedAt: "2026-08-29T12:00:00.000Z",
        } as const;
@@ -1741,7 +1742,7 @@ index 5bca01a57f..59e308f53b 100644
        const replacementUsage = {
          usedTokens: 18_000,
          maxTokens: 200_000,
-@@ -1535,10 +1542,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
+@@ -1536,10 +1543,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
          nodeId,
          driver,
          occurredAt: now,
@@ -1754,7 +1755,7 @@ index 5bca01a57f..59e308f53b 100644
          type: "provider-turn.updated",
          threadId,
          nodeId,
-@@ -1546,9 +1553,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
+@@ -1547,9 +1554,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
          occurredAt: now,
          payload: { ...providerTurn, status: "completed", completedAt: now },
        });
@@ -1784,7 +1785,7 @@ index 5bca01a57f..59e308f53b 100644
        assert.strictEqual(reloaded.providerTurns[0]?.status, "completed");
  
        yield* projectionStore.apply({
-@@ -1563,11 +1589,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
+@@ -1564,11 +1590,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
            status: "completed",
            completedAt: now,
            tokenUsage: replacementUsage,
@@ -1802,10 +1803,10 @@ index 5bca01a57f..59e308f53b 100644
    );
  
 diff --git a/apps/server/src/orchestration-v2/ProjectionStore.ts b/apps/server/src/orchestration-v2/ProjectionStore.ts
-index 1e9176d1be..3df552b461 100644
+index 2a21bfae4b..1cfe7a51c8 100644
 --- a/apps/server/src/orchestration-v2/ProjectionStore.ts
 +++ b/apps/server/src/orchestration-v2/ProjectionStore.ts
-@@ -652,6 +652,9 @@ function upsertProviderTurn(
+@@ -666,6 +666,9 @@ function upsertProviderTurn(
      ...((next.tokenUsage ?? current?.tokenUsage) === undefined
        ? {}
        : { tokenUsage: next.tokenUsage ?? current?.tokenUsage }),
@@ -1815,7 +1816,7 @@ index 1e9176d1be..3df552b461 100644
    });
  }
  
-@@ -2252,7 +2255,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
+@@ -2271,7 +2274,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
              }
              case "provider-turn.updated": {
                const existingRows =
@@ -1826,10 +1827,10 @@ index 1e9176d1be..3df552b461 100644
                      SELECT payload_json
                      FROM orchestration_v2_projection_provider_turns
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index 4796a8465e..671a144723 100644
+index 253cc1ea2e..25ceb01da1 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -309,6 +309,8 @@ import { useProactivePanels } from "../hooks/useProactivePanels";
+@@ -305,6 +305,8 @@ import { useProactivePanels } from "../hooks/useProactivePanels";
  import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
  import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
  import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -1838,7 +1839,7 @@ index 4796a8465e..671a144723 100644
  import { ComposerSurface } from "./chat/ComposerSurface";
  import { resolveThreadSyncPhase } from "../threadSync";
  import {
-@@ -1414,6 +1416,31 @@ export default function ChatView(props: ChatViewProps) {
+@@ -1401,6 +1403,31 @@ export default function ChatView(props: ChatViewProps) {
      activeThreadLiveTokenUsage,
      activeProviderThread,
    );
@@ -1870,7 +1871,7 @@ index 4796a8465e..671a144723 100644
    const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
    const activeWorkStartedAt =
      deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
-@@ -3666,10 +3693,14 @@ export default function ChatView(props: ChatViewProps) {
+@@ -3599,10 +3626,14 @@ export default function ChatView(props: ChatViewProps) {
                          </div>
                        </div>
                      </ComposerSurface.Shell>
@@ -3139,10 +3140,10 @@ index 0000000000..025f57253e
 +  );
 +}
 diff --git a/apps/web/src/components/settings/SettingsPanels.tsx b/apps/web/src/components/settings/SettingsPanels.tsx
-index a4aadac731..d09ba9a0ad 100644
+index 0cb00b86ac..003f8560ab 100644
 --- a/apps/web/src/components/settings/SettingsPanels.tsx
 +++ b/apps/web/src/components/settings/SettingsPanels.tsx
-@@ -482,6 +482,9 @@ export function useSettingsRestore(onRestored?: () => void) {
+@@ -478,6 +478,9 @@ export function useSettingsRestore(onRestored?: () => void) {
      ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
        ? ["Follow-up behavior"]
        : []),
@@ -3152,7 +3153,7 @@ index a4aadac731..d09ba9a0ad 100644
      ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
        ? ["Context window indicator"]
        : []),
-@@ -596,6 +599,7 @@ export function useSettingsRestore(onRestored?: () => void) {
+@@ -592,6 +595,7 @@ export function useSettingsRestore(onRestored?: () => void) {
        composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
        sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
        followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -3160,8 +3161,8 @@ index a4aadac731..d09ba9a0ad 100644
        contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
        environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
        glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
-@@ -1137,6 +1141,31 @@ export function ChatSettingsPanel() {
-             />
+@@ -1107,6 +1111,31 @@ export function ChatSettingsPanel() {
+             </Select>
            }
          />
 +        <SettingsRow
@@ -3193,12 +3194,12 @@ index a4aadac731..d09ba9a0ad 100644
            <SettingsRow
              {...searchableSetting("skills-in-slash-menu")}
 diff --git a/apps/web/src/components/settings/settingsSearch.ts b/apps/web/src/components/settings/settingsSearch.ts
-index 25b5b7cc6d..7d1678447a 100644
+index fe4faa6199..bac42847e8 100644
 --- a/apps/web/src/components/settings/settingsSearch.ts
 +++ b/apps/web/src/components/settings/settingsSearch.ts
 @@ -547,6 +547,12 @@ export const SETTINGS_SEARCH_ITEMS = [
      to: "/settings/chat",
-     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
+     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
    },
 +  {
 +    id: "stats-for-nerds",
@@ -3210,7 +3211,7 @@ index 25b5b7cc6d..7d1678447a 100644
      id: "send-shortcut",
      title: "Send shortcut",
 diff --git a/packages/client-runtime/src/state/orchestrationV2Projection.test.ts b/packages/client-runtime/src/state/orchestrationV2Projection.test.ts
-index e0680c17c4..a86c13fff4 100644
+index f6ba3e9f0c..b66b6bf077 100644
 --- a/packages/client-runtime/src/state/orchestrationV2Projection.test.ts
 +++ b/packages/client-runtime/src/state/orchestrationV2Projection.test.ts
 @@ -146,6 +146,13 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
@@ -3248,7 +3249,7 @@ index e0680c17c4..a86c13fff4 100644
  
    it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
 diff --git a/packages/client-runtime/src/state/orchestrationV2Projection.ts b/packages/client-runtime/src/state/orchestrationV2Projection.ts
-index ffe9eb14df..f0b0a6d462 100644
+index fbba7d1bd9..448103fec9 100644
 --- a/packages/client-runtime/src/state/orchestrationV2Projection.ts
 +++ b/packages/client-runtime/src/state/orchestrationV2Projection.ts
 @@ -347,22 +347,23 @@ export function applyOrchestrationV2ProjectionEvent(
@@ -3381,7 +3382,7 @@ index 2414d3cd01..2e07a5319b 100644
 +  });
 +});
 diff --git a/packages/contracts/src/orchestrationV2.ts b/packages/contracts/src/orchestrationV2.ts
-index 993fb62453..61158f64df 100644
+index 56d910b752..63f510ee45 100644
 --- a/packages/contracts/src/orchestrationV2.ts
 +++ b/packages/contracts/src/orchestrationV2.ts
 @@ -1154,6 +1154,16 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
@@ -3402,22 +3403,22 @@ index 993fb62453..61158f64df 100644
  export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
  
 diff --git a/packages/contracts/src/settings.ts b/packages/contracts/src/settings.ts
-index 8fc9a46116..017f8199a1 100644
+index 48ddc9d43b..9d0888ebfa 100644
 --- a/packages/contracts/src/settings.ts
 +++ b/packages/contracts/src/settings.ts
-@@ -459,6 +459,7 @@ export const ClientSettingsSchema = Schema.Struct({
+@@ -464,6 +464,7 @@ export const ClientSettingsSchema = Schema.Struct({
  
    planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
    contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 +  statsForNerdsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
    composerRichTextEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
    sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
-@@ -1696,6 +1697,7 @@ export const ClientSettingsPatch = Schema.Struct({
+     Schema.withDecodingDefault(Effect.succeed("enter")),
+@@ -1701,6 +1702,7 @@ export const ClientSettingsPatch = Schema.Struct({
    pullRequestLinksOpenInApp: Schema.optionalKey(Schema.Boolean),
    planModeEnabled: Schema.optionalKey(Schema.Boolean),
    contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
 +  statsForNerdsEnabled: Schema.optionalKey(Schema.Boolean),
-   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
    composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
    sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
+   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
