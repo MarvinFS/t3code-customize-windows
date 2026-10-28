@@ -5,15 +5,18 @@ Subject: [PATCH 6/6] fix(tests): keep the Claude wake harness out of the
  host's ~/.claude
 
 The harness left CLAUDE_CONFIG_DIR unset, so every steer and turn scanned the real ~/.claude/skills. On a machine with many skills that read outlasts the tick budget of the "never answers" steer test, which then waits forever on a timeout nothing advances. The harness now points CLAUDE_CONFIG_DIR at an empty temp directory.
+
+The provider replay harness had the same leak through the real ~/.claude/settings.json and the inherited ENABLE_TOOL_SEARCH. Either one adds env.ENABLE_TOOL_SEARCH to the opened query settings, so the recorded query.open frame stopped matching. The replay instance now pins an empty config directory and an empty ENABLE_TOOL_SEARCH.
 ---
- .../src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts  | 7 ++++++-
- 1 file changed, 6 insertions(+), 1 deletion(-)
+ .../Adapters/ClaudeAdapterV2.test.ts          |  7 ++-
+ .../Adapters/ClaudeAdapterV2.testkit.ts       | 43 +++++++++++--------
+ 2 files changed, 31 insertions(+), 19 deletions(-)
 
 diff --git a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
-index fb17b6d36a..6ccf026b61 100644
+index 03b5faec7d..2e75236dd1 100644
 --- a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
 +++ b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
-@@ -2159,6 +2159,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
+@@ -2700,6 +2700,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
          prefix: "t3-claude-v2-wake-",
        });
@@ -25,7 +28,7 @@ index fb17b6d36a..6ccf026b61 100644
        const sdkMessages = yield* Queue.unbounded<SDKMessage>();
        const processQueues: Array<Queue.Queue<SDKMessage>> = [];
        const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
-@@ -2204,7 +2209,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
+@@ -2749,7 +2754,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
          settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
@@ -34,3 +37,57 @@ index fb17b6d36a..6ccf026b61 100644
          attachmentsDir,
          fileSystem,
          path: yield* Path.Path,
+diff --git a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts
+index 082cae55de..83159405c9 100644
+--- a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts
++++ b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts
+@@ -1020,24 +1020,31 @@ function layerClaudeProviderAdapterRegistryReplay(
+     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
+   ).pipe(Layer.provide(NodeServices.layer));
+   return Layer.unwrap(
+-    writeReplayTaskOutputFiles(transcript).pipe(
+-      Effect.orDie,
+-      Effect.map((tmpRoot) =>
+-        ProviderAdapterRegistry.layerFromAdaptersEffect(
+-          ClaudeAdapterV2.createClaudeAdapterV2(
+-            {
+-              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+-              displayName: undefined,
+-              environment: [{ name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false }],
+-              enabled: true,
+-              config: DEFAULT_CLAUDE_SETTINGS,
+-            },
+-            {},
+-          ).pipe(Effect.map((adapter) => [adapter])),
+-        ),
+-      ),
+-      Effect.provide(NodeServices.layer),
+-    ),
++    Effect.gen(function* () {
++      const fileSystem = yield* FileSystem.FileSystem;
++      const tmpRoot = yield* writeReplayTaskOutputFiles(transcript);
++      // Replays must not read the host's ~/.claude or its ENABLE_TOOL_SEARCH, which change the
++      // opened query settings.
++      const claudeConfigDir = yield* fileSystem.makeTempDirectoryScoped({
++        prefix: "claude-replay-config-",
++      });
++      return ProviderAdapterRegistry.layerFromAdaptersEffect(
++        ClaudeAdapterV2.createClaudeAdapterV2(
++          {
++            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
++            displayName: undefined,
++            environment: [
++              { name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false },
++              { name: "CLAUDE_CONFIG_DIR", value: claudeConfigDir, sensitive: false },
++              { name: "ENABLE_TOOL_SEARCH", value: "", sensitive: false },
++            ],
++            enabled: true,
++            config: DEFAULT_CLAUDE_SETTINGS,
++          },
++          {},
++        ).pipe(Effect.map((adapter) => [adapter])),
++      );
++    }).pipe(Effect.orDie, Effect.provide(NodeServices.layer)),
+   ).pipe(
+     Layer.provide(
+       Layer.mergeAll(

@@ -17,10 +17,11 @@ to expand and stays visible when a finished turn folds its work.
  .../chat/MessagesTimeline.logic.test.ts       | 102 ++++++++++++++++++
  .../components/chat/MessagesTimeline.logic.ts |  50 ++++++++-
  .../src/components/chat/MessagesTimeline.tsx  |  41 +++++++
- 3 files changed, 192 insertions(+), 1 deletion(-)
+ .../src/components/chat/SkillInlineText.tsx   |   2 +-
+ 4 files changed, 193 insertions(+), 2 deletions(-)
 
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
-index 84521d67af..2cdbb9a40f 100644
+index dfc9c31fb3..705cc685bf 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.test.ts
 @@ -17,6 +17,7 @@ import {
@@ -31,7 +32,7 @@ index 84521d67af..2cdbb9a40f 100644
  } from "../../session-logic";
  import { makeStreamingTimelineFixture } from "../../test-fixtures";
  import type { TurnDiffSummary } from "../../types";
-@@ -457,6 +458,107 @@ describe("deriveMessagesTimelineRows", () => {
+@@ -454,6 +455,107 @@ describe("deriveMessagesTimelineRows", () => {
      },
    );
  
@@ -136,14 +137,14 @@ index 84521d67af..2cdbb9a40f 100644
 +    });
 +  });
 +
-   it("gives live compaction the activity slot and restores Thinking when it completes", () => {
+   it("shows each compaction trigger as one live status, then a reasoned token divider", () => {
      const fixture = makeStreamingTimelineFixture();
-     const last = fixture.visibleTurnItems.at(-1)!;
+     const [history0, history1, history2, liveUser, , liveAssistant] = fixture.visibleTurnItems;
 diff --git a/apps/web/src/components/chat/MessagesTimeline.logic.ts b/apps/web/src/components/chat/MessagesTimeline.logic.ts
-index 45bb793629..b16fd4f070 100644
+index f771c1ed0d..53039f287b 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.logic.ts
 +++ b/apps/web/src/components/chat/MessagesTimeline.logic.ts
-@@ -61,7 +61,7 @@ import {
+@@ -65,7 +65,7 @@ import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentatio
  import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
  import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
  import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
@@ -152,7 +153,7 @@ index 45bb793629..b16fd4f070 100644
  import { formatWorkspaceRelativePath } from "../../filePathDisplay";
  import {
    collectToolFilePaths,
-@@ -89,6 +89,14 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+@@ -93,6 +93,14 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
    );
  }
  
@@ -167,9 +168,9 @@ index 45bb793629..b16fd4f070 100644
  function singleToolCallLabel(entry: WorkLogEntry): string {
    if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
    const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
-@@ -588,6 +596,14 @@ type MessagesTimelineRowContent =
-       tokenCounts: ReturnType<typeof contextCompactionTokenCounts>;
-       active: boolean;
+@@ -581,6 +589,14 @@ type MessagesTimelineRowContent =
+       /** The provider's reason, when a failed compaction gave one. */
+       failure?: string;
      }
 +  | {
 +      kind: "skill";
@@ -182,23 +183,23 @@ index 45bb793629..b16fd4f070 100644
    | {
        kind: "message";
        id: string;
-@@ -1142,6 +1158,7 @@ function deriveTurnFolds(input: {
-       }
+@@ -1089,6 +1105,7 @@ function deriveTurnFolds(input: {
        if (
+         isCompaction ||
          timelineEntryIsPersistentResourceCard(entry) ||
 +        (entry.kind === "work" && workEntrySkill(entry.entry) !== undefined) ||
          input.liveSubagentEntryIds.has(entry.id) ||
          input.completeSupersededReplyEntryIds.has(entry.id)
        ) {
-@@ -1512,6 +1529,7 @@ export function deriveMessagesTimelineRows(input: {
-         entry.entry.questionAnswer !== undefined ||
+@@ -1466,6 +1483,7 @@ export function deriveMessagesTimelineRows(input: {
+         isPendingApproval(entry.entry) ||
          !runIdIsActiveResponse(entry.entry.runId) ||
          entry.entry.sourceActivityKind === "context-compaction" ||
 +        workEntrySkill(entry.entry) !== undefined ||
          collapsedEntryIds.has(entry.id) ||
          collapsedSupersededEntryIds.has(entry.id) ||
          foldsByAnchorEntryId.has(entry.id) ||
-@@ -1672,6 +1690,25 @@ export function deriveMessagesTimelineRows(input: {
+@@ -1734,6 +1752,25 @@ export function deriveMessagesTimelineRows(input: {
        continue;
      }
  
@@ -223,8 +224,8 @@ index 45bb793629..b16fd4f070 100644
 +
      if (timelineEntry.kind === "work") {
        if (
-         (timelineEntry.entry.runId != null && failedRunIds.has(timelineEntry.entry.runId)) ||
-@@ -1700,6 +1737,7 @@ export function deriveMessagesTimelineRows(input: {
+         isPendingApproval(timelineEntry.entry) ||
+@@ -1763,6 +1800,7 @@ export function deriveMessagesTimelineRows(input: {
            !nextEntry ||
            nextEntry.kind !== "work" ||
            nextEntry.entry.sourceActivityKind === "context-compaction" ||
@@ -232,8 +233,8 @@ index 45bb793629..b16fd4f070 100644
            nextEntry.entry.tone === "error" ||
            nextEntry.entry.sourceActivityKind === "runtime.error" ||
            nextEntry.entry.itemType === "system_notice" ||
-@@ -2270,6 +2308,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
-       return a.createdAt === bc.createdAt && a.label === bc.label && a.active === bc.active;
+@@ -2347,6 +2385,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
+       );
      }
  
 +    case "skill": {
@@ -250,10 +251,10 @@ index 45bb793629..b16fd4f070 100644
        return a.proposedPlan === (b as typeof a).proposedPlan;
  
 diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
-index c3e2007c9a..d3ce54defe 100644
+index a166a25e47..b1d8b16be7 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.tsx
 +++ b/apps/web/src/components/chat/MessagesTimeline.tsx
-@@ -94,6 +94,7 @@ import {
+@@ -98,6 +98,7 @@ import {
    type TimelineRow,
  } from "./timelineRowContext";
  import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
@@ -261,7 +262,7 @@ index c3e2007c9a..d3ce54defe 100644
  import {
    WorkGroupSection,
    WorkingTimelineRow,
-@@ -1215,6 +1216,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -1471,6 +1472,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                  row.kind === "worktree-setup" ||
                  row.kind === "event" ||
                  row.kind === "attempt-fold" ||
@@ -269,7 +270,7 @@ index c3e2007c9a..d3ce54defe 100644
                  row.kind === "html-render" ||
                  row.kind === "mcp-app"
                ? "pb-2"
-@@ -1258,6 +1260,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
+@@ -1514,6 +1516,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
        {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
        {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
        {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
@@ -277,7 +278,7 @@ index c3e2007c9a..d3ce54defe 100644
        {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
        {row.kind === "message" && row.message.role === "assistant" ? (
          <AssistantTimelineRow row={row} />
-@@ -1333,6 +1336,44 @@ function ContextCompactionTimelineRow({
+@@ -1603,6 +1606,44 @@ function ContextCompactionTimelineRow({
    );
  }
  
@@ -322,3 +323,16 @@ index c3e2007c9a..d3ce54defe 100644
  function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
    const ctx = use(TimelineRowCtx);
  
+diff --git a/apps/web/src/components/chat/SkillInlineText.tsx b/apps/web/src/components/chat/SkillInlineText.tsx
+index 59fb9d141e..dfd9e99808 100644
+--- a/apps/web/src/components/chat/SkillInlineText.tsx
++++ b/apps/web/src/components/chat/SkillInlineText.tsx
+@@ -110,7 +110,7 @@ export function SkillChipPopover(props: {
+   );
+ }
+ 
+-function SkillChipIcon() {
++export function SkillChipIcon() {
+   return (
+     <span
+       aria-hidden="true"

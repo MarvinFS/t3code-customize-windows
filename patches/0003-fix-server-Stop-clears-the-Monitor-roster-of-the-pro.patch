@@ -21,17 +21,18 @@ turn items; do the same for its roster.
  1 file changed, 39 insertions(+)
 
 diff --git a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
-index e59ad3da7c..90d43bdad5 100644
+index ffe8203c8c..d9c5e042ff 100644
 --- a/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
 +++ b/apps/server/src/orchestration-v2/BackgroundWorkStop.integration.test.ts
-@@ -41,12 +41,14 @@ const stopEarlierBackgroundWork = ({
+@@ -42,6 +42,7 @@ const stopEarlierBackgroundWork = ({
    backgroundWorkAfterStop,
    stalledRun,
    workflowMember = false,
 +  monitorRoster = false,
  }: {
+   readonly wakeAfterStop?: boolean;
    readonly failedStart?: boolean;
-   readonly backgroundWorkAfterStop?: "running" | "unknown";
+@@ -49,6 +50,7 @@ const stopEarlierBackgroundWork = ({
    readonly stopWithQueue?: "thread.stop" | "run.interrupt";
    readonly olderStart?: boolean;
    readonly workflowMember?: boolean;
@@ -39,7 +40,7 @@ index e59ad3da7c..90d43bdad5 100644
    readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
  }) =>
    Effect.scoped(
-@@ -893,6 +895,30 @@ const stopEarlierBackgroundWork = ({
+@@ -935,6 +937,30 @@ const stopEarlierBackgroundWork = ({
            });
          }
  
@@ -70,7 +71,7 @@ index e59ad3da7c..90d43bdad5 100644
          yield* orchestrator.dispatch(
            stopWithQueue === "thread.stop"
              ? {
-@@ -924,6 +950,14 @@ const stopEarlierBackgroundWork = ({
+@@ -966,6 +992,14 @@ const stopEarlierBackgroundWork = ({
            ],
          );
          const after = yield* orchestrator.getThreadProjection(threadId);
@@ -85,7 +86,7 @@ index e59ad3da7c..90d43bdad5 100644
          if (olderStart) {
            assert.equal(
              after.runs.find((run) => run.id === watcherRun.runId)?.status,
-@@ -1002,6 +1036,11 @@ it.effect("Stop preserves the roster when the background work probe fails", () =
+@@ -1044,6 +1078,11 @@ it.effect("Stop preserves the roster when the background work probe fails", () =
    stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
  );
  

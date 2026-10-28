@@ -4,10 +4,83 @@ Date: Thu, 15 Oct 2026 17:53:16 -0400
 Subject: [PATCH 5/6] fix(tests): honor Windows filesystem modes
 
 Windows reports read/write bits for every class, so the owner-only mode checks expect 0o666 there and 0o600 on POSIX.
----
- apps/server/src/provider/claudeResetCredits.test.ts | 10 +++++++---
- 1 file changed, 7 insertions(+), 3 deletions(-)
 
+Claude Code keeps settings.local.json in cwd on Windows, so the tool search test, which asserts the repository-root lookup, now runs as a POSIX host.
+
+The attachment tests look for file paths inside JSON.stringify output, which escapes Windows backslashes, so they now match the JSON-encoded path.
+---
+ .../Adapters/ClaudeAdapterV2.test.ts              | 15 ++++++++++-----
+ .../src/provider/claudeResetCredits.test.ts       | 10 +++++++---
+ 2 files changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
+index d7ea497a75..03b5faec7d 100644
+--- a/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
++++ b/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
+@@ -1461,6 +1461,9 @@ describe("ClaudeAdapterV2 resume compaction", () => {
+   );
+ });
+ 
++// Paths as they appear inside JSON.stringify output; Windows separators are escaped there.
++const jsonEncoded = (value: string) => JSON.stringify(value).slice(1, -1);
++
+ describe("ClaudeAdapterV2 attachments", () => {
+   it.effect.each([
+     ...[
+@@ -1714,7 +1717,7 @@ describe("ClaudeAdapterV2 attachments", () => {
+             yield* deliver;
+             const retried = offeredMessages.at(-1)!.message.content;
+             assert.notInclude(JSON.stringify(retried), '"type":"document"');
+-            assert.include(JSON.stringify(retried), documentPath);
++            assert.include(JSON.stringify(retried), jsonEncoded(documentPath));
+             assert.isBelow(Buffer.byteLength(JSON.stringify(offeredMessages)), 32_000_000);
+             return;
+           }
+@@ -1763,7 +1766,7 @@ describe("ClaudeAdapterV2 attachments", () => {
+                 typeof sent === "string" ? [] : sent.filter((block) => block.type === "image"),
+                 budget === "partial-images" ? 1 : 0,
+               );
+-              assert.include(JSON.stringify(sent), imagePath);
++              assert.include(JSON.stringify(sent), jsonEncoded(imagePath));
+               yield* runtime.steerTurn({
+                 threadId,
+                 runId: RunId.make("run-claude-attachments"),
+@@ -1782,7 +1785,7 @@ describe("ClaudeAdapterV2 attachments", () => {
+                   : steered.filter((block) => block.type === "image"),
+                 0,
+               );
+-              assert.include(JSON.stringify(steered), imagePath);
++              assert.include(JSON.stringify(steered), jsonEncoded(imagePath));
+               assert.isBelow(
+                 Buffer.byteLength(
+                   JSON.stringify(offeredMessages.map((message) => message.message)),
+@@ -1844,7 +1847,7 @@ describe("ClaudeAdapterV2 attachments", () => {
+               0,
+               budget,
+             );
+-            assert.include(JSON.stringify(sent), documentPath);
++            assert.include(JSON.stringify(sent), jsonEncoded(documentPath));
+             return;
+           }
+           if (!resumed) {
+@@ -2057,7 +2060,7 @@ describe("ClaudeAdapterV2 attachments", () => {
+             );
+             if (scenario === "text-only")
+               assert.equal(sent, ultrathink ? "Ultrathink:\nContinue." : "Continue.");
+-            else assert.include(JSON.stringify(sent), documentPath);
++            else assert.include(JSON.stringify(sent), jsonEncoded(documentPath));
+           }
+         }).pipe(
+           Effect.provide(
+@@ -3887,6 +3890,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
+           "true",
+         );
+       }).pipe(
++        // Windows keeps settings.local.json in cwd, so the repository-root lookup needs a POSIX host.
++        Effect.provideService(HostProcess.Platform, "linux"),
+         Effect.provide(
+           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+         ),
 diff --git a/apps/server/src/provider/claudeResetCredits.test.ts b/apps/server/src/provider/claudeResetCredits.test.ts
 index 9e7c23702f..187a2e80b4 100644
 --- a/apps/server/src/provider/claudeResetCredits.test.ts
