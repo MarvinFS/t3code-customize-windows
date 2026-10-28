@@ -10,6 +10,7 @@ The README in the repo root is btsouth's own, kept as he wrote it. This page and
 - Context used in the thread. Hover it for the window size, the auto-compaction threshold and a Compact now button.
 - Tokens per second for the last response, with turn time and token details on hover. Claude rates are measured from the stream and Codex rates are labeled approximate.
 - Cache rate for the last turn.
+- What RTK saved today, as a chip in the middle of the stats line, for example `RTK -1.4k (12%)`. Hover it for the exact tokens, the command count and, when RTK reports one, the all-time total. It counts every agent session on the machine that runs T3 Code, not only the open thread, and is hidden when RTK is not installed or saved nothing today.
 - Each Claude skill load as its own timeline row, shown like the Claude Code CLI does: `Skill(name)` with its arguments and a status line ("Loading skill", "Successfully loaded skill" or "Failed to load skill"). Stock T3 Code folds it into the "Used N tools" group, where it opens as raw JSON.
 - A chip on the stats line that offers the same model on the signed-in subscription with the most room, when the current one is on pace to run out before its reset.
 - A fix for Stop on a settled thread: it now clears the Monitor roster of the provider thread it interrupted, so the Monitor's Stop button works and the Provider error goes away.
@@ -34,6 +35,7 @@ Everything else is stock T3 Code, including T3 Connect and the mobile app.
 | 0004 | Each Claude skill load as its own timeline row | this repo |
 | 0005 | Tests expect Windows file modes, so two limits tests run on Windows | btsouth |
 | 0006 | The Claude wake test harness stays out of the host's `~/.claude` | this repo |
+| 0007 | RTK token savings in the composer stats line | this repo |
 
 btsouth's compaction settings patch is kept in `patches/disabled/` and not applied, because T3 Code now has its own Compact button and auto-compact threshold. The tool applies the patches in file-name order and renumbers them when it writes ported patches back.
 
@@ -65,7 +67,7 @@ Copy the two original files from `resources` somewhere first if you want a way b
 
 The tool applies the patches to the exact upstream commit of your installed nightly, then runs what `checks.json` lists:
 
-- 17 test files through `vp test run`.
+- 21 test files through `vp test run`.
 - A typecheck of 8 packages through `tsc --noEmit`. In T3 Code's checkout `tsc` is tsc-rs, Theo Browne's Rust port of the TypeScript 7 compiler, which T3 Code's own package scripts call.
 
 Two tests may fail on Windows: one looks for a Unix path (it passes on the current nightly), and one upstream test times out. `checks.windows.json` lists each with its reason, and a build continues when only those fail. Any other failure stops the build and leaves your installed T3 Code alone.

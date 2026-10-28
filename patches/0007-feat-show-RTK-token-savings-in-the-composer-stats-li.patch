@@ -1,0 +1,796 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MarvinFS <MarvinFS@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 12:53:59 +0200
+Subject: [PATCH 7/7] feat: show RTK token savings in the composer stats line
+
+The stats line now shows what RTK has saved today on the server host, in the CLI status line's terms: RTK -1.4k (12%). The chip sits in the free space between the limit meters and the turn stats, and hovering it shows the commands RTK handled and, when RTK reports one, the all-time total.
+
+The server answers a new server.getRtkSavings RPC by running rtk gain --daily --format json and returning today's entry. The result is null when RTK is not installed, does not answer within five seconds, prints something unreadable or saved nothing today, and the stats line then shows no RTK part. The web re-reads it once a minute while a stats line is open and for up to five minutes after the last one closes.
+---
+ apps/server/src/auth/RpcAuthorization.ts      |   2 +
+ .../src/observability/RpcInstrumentation.ts   |   1 +
+ apps/server/src/rtk/RtkSavings.test.ts        | 199 ++++++++++++++++++
+ apps/server/src/rtk/RtkSavings.ts             |  73 +++++++
+ apps/server/src/ws.ts                         |   2 +
+ apps/web/src/components/ChatView.tsx          |   4 +-
+ .../chat/ComposerStats.logic.test.ts          |  56 +++++
+ .../components/chat/ComposerStats.logic.ts    |  26 +++
+ .../components/chat/ComposerStats.test.tsx    |  56 +++++
+ .../web/src/components/chat/ComposerStats.tsx |  35 ++-
+ apps/web/src/state/rtkSavings.ts              |  30 +++
+ packages/contracts/src/index.ts               |   1 +
+ packages/contracts/src/rpc.ts                 |   9 +
+ packages/contracts/src/rtkSavings.test.ts     |  34 +++
+ packages/contracts/src/rtkSavings.ts          |  19 ++
+ 15 files changed, 545 insertions(+), 2 deletions(-)
+ create mode 100644 apps/server/src/rtk/RtkSavings.test.ts
+ create mode 100644 apps/server/src/rtk/RtkSavings.ts
+ create mode 100644 apps/web/src/components/chat/ComposerStats.test.tsx
+ create mode 100644 apps/web/src/state/rtkSavings.ts
+ create mode 100644 packages/contracts/src/rtkSavings.test.ts
+ create mode 100644 packages/contracts/src/rtkSavings.ts
+
+diff --git a/apps/server/src/auth/RpcAuthorization.ts b/apps/server/src/auth/RpcAuthorization.ts
+index f127f94fdb..08c0a69b10 100644
+--- a/apps/server/src/auth/RpcAuthorization.ts
++++ b/apps/server/src/auth/RpcAuthorization.ts
+@@ -106,6 +106,8 @@ export const RPC_REQUIRED_SCOPES = {
+   [WS_METHODS.serverRetryResourceTelemetry]: AuthDiagnosticsReadScope,
+   [WS_METHODS.serverGetUsageSummary]: AuthDiagnosticsReadScope,
+   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
++  // The stats line shows RTK savings in every thread, so this needs thread scope rather than diagnostics scope.
++  [WS_METHODS.serverGetRtkSavings]: AuthOrchestrationReadScope,
+   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
+   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
+   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+diff --git a/apps/server/src/observability/RpcInstrumentation.ts b/apps/server/src/observability/RpcInstrumentation.ts
+index 504e533b37..68bbdaa151 100644
+--- a/apps/server/src/observability/RpcInstrumentation.ts
++++ b/apps/server/src/observability/RpcInstrumentation.ts
+@@ -83,6 +83,7 @@ const RPC_AGGREGATES = {
+   [WS_METHODS.serverPrepareTriage]: "server",
+   [WS_METHODS.serverGetUsageSummary]: "server",
+   [WS_METHODS.serverRefreshUsageRates]: "server",
++  [WS_METHODS.serverGetRtkSavings]: "server",
+   [WS_METHODS.serverSignalProcess]: "server",
+   [WS_METHODS.serverReportClientActivity]: "server",
+   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
+diff --git a/apps/server/src/rtk/RtkSavings.test.ts b/apps/server/src/rtk/RtkSavings.test.ts
+new file mode 100644
+index 0000000000..4122d4c44a
+--- /dev/null
++++ b/apps/server/src/rtk/RtkSavings.test.ts
+@@ -0,0 +1,199 @@
++import { describe, expect, it } from "@effect/vitest";
++import { RtkSavings as RtkSavingsSchema } from "@t3tools/contracts";
++import * as DateTime from "effect/DateTime";
++import * as Effect from "effect/Effect";
++import * as Fiber from "effect/Fiber";
++import * as Layer from "effect/Layer";
++import * as PlatformError from "effect/PlatformError";
++import * as Schema from "effect/Schema";
++import * as Sink from "effect/Sink";
++import * as Stream from "effect/Stream";
++import * as TestClock from "effect/testing/TestClock";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
++
++import * as RtkSavings from "./RtkSavings.ts";
++
++const encoder = new TextEncoder();
++const isRtkSavings = Schema.is(RtkSavingsSchema);
++
++/** The part of `rtk gain --daily --format json` that matters here; RTK prints more. */
++const gainOutput = (daily: ReadonlyArray<Record<string, unknown>>, totalSaved = 2_159_103) =>
++  JSON.stringify({
++    summary: { total_commands: 28_008, total_saved: totalSaved, avg_savings_pct: 25.06 },
++    daily,
++  });
++
++const todayEntry = {
++  date: "2026-10-28",
++  commands: 39,
++  input_tokens: 11_293,
++  output_tokens: 9_913,
++  saved_tokens: 1_380,
++  savings_pct: 12.219959266802444,
++};
++
++describe("parseRtkGain", () => {
++  it("returns today's entry with the all-time total", () => {
++    const yesterday = { ...todayEntry, date: "2026-10-27", saved_tokens: 4_106 };
++    expect(RtkSavings.parseRtkGain(gainOutput([yesterday, todayEntry]), "2026-10-28")).toEqual({
++      date: "2026-10-28",
++      commands: 39,
++      savedTokens: 1_380,
++      savingsPercent: 12.219959266802444,
++      totalSavedTokens: 2_159_103,
++    });
++  });
++
++  it("keeps today's entry when the report has no summary to take an all-time total from", () => {
++    const output = JSON.stringify({ daily: [todayEntry] });
++    expect(RtkSavings.parseRtkGain(output, "2026-10-28")).toEqual({
++      date: "2026-10-28",
++      commands: 39,
++      savedTokens: 1_380,
++      savingsPercent: 12.219959266802444,
++    });
++  });
++
++  it("is null when RTK has no entry for today", () => {
++    const output = gainOutput([{ ...todayEntry, date: "2026-10-27" }]);
++    expect(RtkSavings.parseRtkGain(output, "2026-10-28")).toBeNull();
++  });
++
++  it("is null when nothing was saved today, like the CLI status line", () => {
++    const output = gainOutput([{ ...todayEntry, saved_tokens: 0, savings_pct: 0 }]);
++    expect(RtkSavings.parseRtkGain(output, "2026-10-28")).toBeNull();
++  });
++
++  it.each([
++    ["empty output", ""],
++    ["a shell error", "rtk: command not found"],
++    ["a report without days", JSON.stringify({ summary: { total_saved: 1 } })],
++    ["a malformed day list", JSON.stringify({ summary: { total_saved: 1 }, daily: 5 })],
++  ])("is null for %s", (_name, output) => {
++    expect(RtkSavings.parseRtkGain(output, "2026-10-28")).toBeNull();
++  });
++
++  it("keeps its result inside what the contract accepts", () => {
++    const output = gainOutput([{ ...todayEntry, saved_tokens: 1_380.4, savings_pct: 100.4 }]);
++    const parsed = RtkSavings.parseRtkGain(output, "2026-10-28");
++    expect(parsed).toMatchObject({ savedTokens: 1_380, savingsPercent: 100 });
++    expect(isRtkSavings(parsed)).toBe(true);
++  });
++
++  it("is null when a fractional count rounds down to nothing", () => {
++    const output = gainOutput([{ ...todayEntry, saved_tokens: 0.4 }]);
++    expect(RtkSavings.parseRtkGain(output, "2026-10-28")).toBeNull();
++  });
++});
++
++describe("localIsoDate", () => {
++  const instant = DateTime.makeUnsafe("2026-10-28T22:30:00Z");
++
++  it("names the calendar day in the given zone, not in UTC", () => {
++    expect(RtkSavings.localIsoDate(instant, DateTime.zoneMakeNamedUnsafe("Europe/Bucharest"))).toBe(
++      "2026-10-29",
++    );
++    expect(
++      RtkSavings.localIsoDate(instant, DateTime.zoneMakeNamedUnsafe("America/Los_Angeles")),
++    ).toBe("2026-10-28");
++  });
++});
++
++interface SpawnCall {
++  readonly command: string;
++  readonly args: ReadonlyArray<string>;
++}
++
++const layerSpawner = (
++  respond: (call: SpawnCall) => Effect.Effect<string, PlatformError.PlatformError>,
++  calls: Array<SpawnCall> = [],
++) =>
++  Layer.succeed(
++    ChildProcessSpawner.ChildProcessSpawner,
++    ChildProcessSpawner.make((command) =>
++      Effect.gen(function* () {
++        if (!ChildProcess.isStandardCommand(command)) {
++          return yield* Effect.die("Expected a standard command.");
++        }
++        const call = { command: command.command, args: command.args };
++        calls.push(call);
++        const stdout = yield* respond(call);
++        return ChildProcessSpawner.makeHandle({
++          pid: ChildProcessSpawner.ProcessId(1),
++          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
++          isRunning: Effect.succeed(false),
++          kill: () => Effect.void,
++          unref: Effect.succeed(Effect.void),
++          stdin: Sink.drain,
++          stdout: Stream.make(encoder.encode(stdout)),
++          stderr: Stream.empty,
++          all: Stream.empty,
++          getInputFd: () => Sink.drain,
++          getOutputFd: () => Stream.empty,
++        });
++      }),
++    ),
++  );
++
++const noon = DateTime.makeUnsafe("2026-10-28T12:00:00Z");
++const localToday = RtkSavings.localIsoDate(noon, DateTime.zoneMakeLocal());
++
++describe("RtkSavings.read", () => {
++  it.effect("runs rtk gain for daily JSON and returns today's savings", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(DateTime.toEpochMillis(noon));
++      const calls: Array<SpawnCall> = [];
++      const savings = yield* RtkSavings.read().pipe(
++        Effect.provide(
++          layerSpawner(
++            () => Effect.succeed(gainOutput([{ ...todayEntry, date: localToday }])),
++            calls,
++          ),
++        ),
++      );
++      expect(calls).toEqual([{ command: "rtk", args: ["gain", "--daily", "--format", "json"] }]);
++      expect(savings).toMatchObject({ date: localToday, savedTokens: 1_380, commands: 39 });
++    }),
++  );
++
++  it.effect("is null when rtk is not installed", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(DateTime.toEpochMillis(noon));
++      const savings = yield* RtkSavings.read().pipe(
++        Effect.provide(
++          layerSpawner(() =>
++            PlatformError.systemError({
++              _tag: "NotFound",
++              module: "ChildProcess",
++              method: "spawn",
++              description: "rtk is not on PATH",
++            }),
++          ),
++        ),
++      );
++      expect(savings).toBeNull();
++    }),
++  );
++
++  it.effect("is null when rtk prints something unreadable", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(DateTime.toEpochMillis(noon));
++      const savings = yield* RtkSavings.read().pipe(
++        Effect.provide(layerSpawner(() => Effect.succeed("not json at all"))),
++      );
++      expect(savings).toBeNull();
++    }),
++  );
++
++  it.effect("gives up on an rtk that never answers", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(DateTime.toEpochMillis(noon));
++      const fiber = yield* RtkSavings.read().pipe(
++        Effect.provide(layerSpawner(() => Effect.never)),
++        Effect.forkChild,
++      );
++      yield* TestClock.adjust("5 seconds");
++      expect(yield* Fiber.join(fiber)).toBeNull();
++    }),
++  );
++});
+diff --git a/apps/server/src/rtk/RtkSavings.ts b/apps/server/src/rtk/RtkSavings.ts
+new file mode 100644
+index 0000000000..e5b86004ab
+--- /dev/null
++++ b/apps/server/src/rtk/RtkSavings.ts
+@@ -0,0 +1,73 @@
++import type { RtkSavings } from "@t3tools/contracts";
++import * as DateTime from "effect/DateTime";
++import * as Effect from "effect/Effect";
++import * as Option from "effect/Option";
++import * as Schema from "effect/Schema";
++import { ChildProcess, ChildProcessSpawner } from "effect/process";
++
++/**
++ * The part of `rtk gain --daily --format json` that is read here; RTK prints more. Only the
++ * daily list is required, because RTK versions differ on the summary and the all-time total is
++ * only a detail in the stats line's tooltip.
++ */
++const RtkGainReport = Schema.Struct({
++  summary: Schema.optional(Schema.Struct({ total_saved: Schema.optional(Schema.Number) })),
++  daily: Schema.Array(
++    Schema.Struct({
++      date: Schema.String,
++      commands: Schema.Number,
++      saved_tokens: Schema.Number,
++      savings_pct: Schema.Number,
++    }),
++  ),
++});
++
++const decodeGainReport = Schema.decodeUnknownOption(Schema.fromJsonString(RtkGainReport));
++
++/**
++ * Today's entry from RTK's daily report. Null when RTK printed something else, has no
++ * entry for today or saved nothing, which is when the CLI status line shows no RTK part.
++ */
++export function parseRtkGain(output: string, today: string): RtkSavings | null {
++  const report = Option.getOrNull(decodeGainReport(output));
++  const day = report?.daily.find((entry) => entry.date === today);
++  if (report === null || day === undefined) return null;
++  const savedTokens = Math.round(day.saved_tokens);
++  if (savedTokens <= 0) return null;
++  const totalSaved = report.summary?.total_saved;
++  return {
++    date: day.date,
++    commands: Math.max(0, Math.round(day.commands)),
++    savedTokens,
++    savingsPercent: Math.min(100, Math.max(0, day.savings_pct)),
++    ...(totalSaved === undefined
++      ? {}
++      : { totalSavedTokens: Math.max(savedTokens, Math.round(totalSaved)) }),
++  };
++}
++
++/** RTK files its days by local calendar date, as the CLI status line does. */
++export function localIsoDate(now: DateTime.Utc, zone: DateTime.TimeZone): string {
++  return DateTime.formatIsoDate(DateTime.setZone(now, zone));
++}
++
++/**
++ * Reads what RTK saved today on this host. RTK is optional, so every failure (not
++ * installed, slow, unreadable) reads as null and the stats line simply omits it.
++ */
++export const read = Effect.fn("RtkSavings.read")(function* () {
++  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
++  const output = yield* spawner
++    .string(
++      ChildProcess.make("rtk", ["gain", "--daily", "--format", "json"], {
++        stdin: "ignore",
++        stderr: "ignore",
++      }),
++    )
++    .pipe(
++      Effect.timeout("5 seconds"),
++      Effect.orElseSucceed(() => ""),
++    );
++  const now = yield* DateTime.now;
++  return parseRtkGain(output, localIsoDate(now, DateTime.zoneMakeLocal()));
++});
+diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
+index e35aaf1bb9..31115b5761 100644
+--- a/apps/server/src/ws.ts
++++ b/apps/server/src/ws.ts
+@@ -232,6 +232,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
+ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+ import * as HostResources from "./resourceTelemetry/HostResources.ts";
++import * as RtkSavings from "./rtk/RtkSavings.ts";
+ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+ import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
+ import type { TelemetryOwner } from "./telemetry/Identify.ts";
+@@ -2523,6 +2524,7 @@ export const layerWsRpc = (
+           resourceTelemetry.readHistory(input),
+         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
+         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
++        [WS_METHODS.serverGetRtkSavings]: (_input) => RtkSavings.read(),
+         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
+         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
+         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
+diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
+index 671a144723..2f38cb9da1 100644
+--- a/apps/web/src/components/ChatView.tsx
++++ b/apps/web/src/components/ChatView.tsx
+@@ -3695,7 +3695,9 @@ export default function ChatView(props: ChatViewProps) {
+                     </ComposerSurface.Shell>
+                     {/* Opaque so timeline content scrolling under the overlay can't show through the stats line. */}
+                     <div className={composerStats !== null ? "bg-background" : undefined}>
+-                      {composerStats !== null && <ComposerStats {...composerStats} />}
++                      {composerStats !== null && (
++                        <ComposerStats {...composerStats} environmentId={environmentId} />
++                      )}
+                       <div
+                         aria-hidden
+                         className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+diff --git a/apps/web/src/components/chat/ComposerStats.logic.test.ts b/apps/web/src/components/chat/ComposerStats.logic.test.ts
+index 479e94b193..02876a0926 100644
+--- a/apps/web/src/components/chat/ComposerStats.logic.test.ts
++++ b/apps/web/src/components/chat/ComposerStats.logic.test.ts
+@@ -17,6 +17,9 @@ import {
+   deriveResponseRate,
+   deriveTurnCachePercentage,
+   formatCachePercentage,
++  formatRtkPercent,
++  formatRtkSavedTokens,
++  formatRtkSavingsDetail,
+   deriveTurnElapsedMs,
+   selectComposerLimitWindows,
+   selectComposerStatsTurns,
+@@ -437,3 +440,56 @@ describe("composer limit display", () => {
+     expect(display.dimmed).toBe(true);
+   });
+ });
++
++describe("formatRtkSavedTokens", () => {
++  it("prints small counts exactly", () => {
++    expect(formatRtkSavedTokens(0)).toBe("0");
++    expect(formatRtkSavedTokens(512)).toBe("512");
++    expect(formatRtkSavedTokens(999)).toBe("999");
++  });
++
++  it("uses one decimal of thousands like the CLI status line", () => {
++    expect(formatRtkSavedTokens(1000)).toBe("1.0k");
++    expect(formatRtkSavedTokens(1380)).toBe("1.4k");
++    expect(formatRtkSavedTokens(4123)).toBe("4.1k");
++    expect(formatRtkSavedTokens(999_949)).toBe("999.9k");
++  });
++
++  it("moves to millions instead of printing 1000.0k", () => {
++    expect(formatRtkSavedTokens(999_950)).toBe("1.0M");
++    expect(formatRtkSavedTokens(2_159_103)).toBe("2.2M");
++    expect(formatRtkSavedTokens(12_400_000)).toBe("12.4M");
++  });
++});
++
++describe("formatRtkPercent", () => {
++  it("rounds to a whole percent", () => {
++    expect(formatRtkPercent(12.2)).toBe("12%");
++    expect(formatRtkPercent(0.4)).toBe("0%");
++    expect(formatRtkPercent(99.6)).toBe("100%");
++    expect(formatRtkPercent(100)).toBe("100%");
++  });
++});
++
++describe("formatRtkSavingsDetail", () => {
++  const savings = {
++    date: "2026-10-28",
++    commands: 87,
++    savedTokens: 13_527,
++    savingsPercent: 38.8,
++    totalSavedTokens: 2_171_279,
++  };
++
++  it("spells out today's figures and the all-time total", () => {
++    expect(formatRtkSavingsDetail(savings)).toBe(
++      "RTK removed 13,527 tokens (38.8%) from 87 command outputs today. All time: 2,171,279 tokens. This counts every agent session on this host, not just this thread.",
++    );
++  });
++
++  it("leaves out the all-time total when RTK does not report one", () => {
++    const { totalSavedTokens: _total, ...withoutTotal } = savings;
++    expect(formatRtkSavingsDetail(withoutTotal)).toBe(
++      "RTK removed 13,527 tokens (38.8%) from 87 command outputs today. This counts every agent session on this host, not just this thread.",
++    );
++  });
++});
+diff --git a/apps/web/src/components/chat/ComposerStats.logic.ts b/apps/web/src/components/chat/ComposerStats.logic.ts
+index 4ad220f94b..a4dbc69e41 100644
+--- a/apps/web/src/components/chat/ComposerStats.logic.ts
++++ b/apps/web/src/components/chat/ComposerStats.logic.ts
+@@ -2,6 +2,7 @@ import type {
+   OrchestrationV2ProviderTurn,
+   OrchestrationV2ThreadProjection,
+   OrchestrationV2TurnItem,
++  RtkSavings,
+   ServerProviderUsageLimits,
+   ServerProviderUsageWindow,
+   TurnTokenUsage,
+@@ -249,3 +250,28 @@ export function composerLimitDisplay(
+     dimmed: freshness.status !== "fresh",
+   };
+ }
++
++/**
++ * RTK's saved-token count as the CLI status line prints it: one decimal of thousands,
++ * with millions taking over before a value would round up to 1000.0k.
++ */
++export function formatRtkSavedTokens(tokens: number): string {
++  if (tokens < 1_000) return String(tokens);
++  const thousands = Math.round(tokens / 100) / 10;
++  if (thousands < 1_000) return `${thousands.toFixed(1)}k`;
++  return `${(Math.round(tokens / 100_000) / 10).toFixed(1)}M`;
++}
++
++export function formatRtkPercent(percent: number): string {
++  return `${Math.round(percent)}%`;
++}
++
++/** The chip's hover text: today's figures, the all-time total when RTK reports one, and the scope. */
++export function formatRtkSavingsDetail(savings: RtkSavings): string {
++  const count = (value: number) => value.toLocaleString("en-US");
++  const allTime =
++    savings.totalSavedTokens === undefined
++      ? ""
++      : ` All time: ${count(savings.totalSavedTokens)} tokens.`;
++  return `RTK removed ${count(savings.savedTokens)} tokens (${savings.savingsPercent.toFixed(1)}%) from ${count(savings.commands)} command outputs today.${allTime} This counts every agent session on this host, not just this thread.`;
++}
+diff --git a/apps/web/src/components/chat/ComposerStats.test.tsx b/apps/web/src/components/chat/ComposerStats.test.tsx
+new file mode 100644
+index 0000000000..9972505788
+--- /dev/null
++++ b/apps/web/src/components/chat/ComposerStats.test.tsx
+@@ -0,0 +1,56 @@
++import { EnvironmentId, type RtkSavings } from "@t3tools/contracts";
++import { renderToStaticMarkup } from "react-dom/server";
++import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
++
++import { ComposerStats, RtkSavingsChip } from "./ComposerStats";
++
++// Only the data boundary is stubbed; the component under test is the real one.
++const rtk = vi.hoisted(() => ({ savings: null as RtkSavings | null }));
++vi.mock("~/state/rtkSavings", () => ({ useRtkSavings: () => rtk.savings }));
++
++const savings: RtkSavings = {
++  date: "2026-10-28",
++  commands: 39,
++  savedTokens: 1_380,
++  savingsPercent: 12.2,
++  totalSavedTokens: 2_159_103,
++};
++
++describe("RtkSavingsChip", () => {
++  it("shows today's saved tokens and percentage the way the CLI status line does", () => {
++    const text = renderToStaticMarkup(<RtkSavingsChip savings={savings} />).replace(/<[^>]*>/g, "");
++    expect(text).toContain("RTK");
++    expect(text).toContain("-1.4k");
++    expect(text).toContain("(12%)");
++  });
++
++  it("takes the free space between the limit meters and the turn stats and centers in it", () => {
++    const markup = renderToStaticMarkup(<RtkSavingsChip savings={savings} />);
++    expect(markup).toMatch(/^<span class="[^"]*\bflex-1\b[^"]*\bjustify-center\b/);
++  });
++});
++
++describe("ComposerStats with RTK savings", () => {
++  const noStats = {
++    context: null,
++    turn: null,
++    compactions: [],
++    usageLimits: null,
++    environmentId: EnvironmentId.make("environment-1"),
++  } as const;
++
++  beforeEach(() => {
++    rtk.savings = null;
++  });
++
++  it("shows the line for RTK alone, so the chip does not wait for another stat", () => {
++    rtk.savings = savings;
++    const markup = renderToStaticMarkup(<ComposerStats {...noStats} />);
++    expect(markup).toContain('data-composer-stats="true"');
++    expect(markup).toContain("RTK");
++  });
++
++  it("shows nothing when there is neither a stat nor RTK savings", () => {
++    expect(renderToStaticMarkup(<ComposerStats {...noStats} />)).toBe("");
++  });
++});
+diff --git a/apps/web/src/components/chat/ComposerStats.tsx b/apps/web/src/components/chat/ComposerStats.tsx
+index 025f57253e..3c7071de98 100644
+--- a/apps/web/src/components/chat/ComposerStats.tsx
++++ b/apps/web/src/components/chat/ComposerStats.tsx
+@@ -1,6 +1,8 @@
+ import type {
++  EnvironmentId,
+   OrchestrationV2ProviderTurn,
+   OrchestrationV2TurnItem,
++  RtkSavings,
+   ServerProviderUsageLimits,
+   ServerProviderUsageWindow,
+ } from "@t3tools/contracts";
+@@ -10,6 +12,7 @@ import * as DateTime from "effect/DateTime";
+ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+ 
+ import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
++import { useRtkSavings } from "~/state/rtkSavings";
+ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+ import { composerFloatingLayerProps } from "./composerEventScope";
+@@ -21,6 +24,9 @@ import {
+   deriveResponseRate,
+   deriveTurnCachePercentage,
+   formatCachePercentage,
++  formatRtkPercent,
++  formatRtkSavedTokens,
++  formatRtkSavingsDetail,
+   deriveTurnElapsedMs,
+   selectComposerLimitWindows,
+ } from "./ComposerStats.logic";
+@@ -273,17 +279,42 @@ function UsageLimitsSummary({
+   );
+ }
+ 
++/**
++ * What RTK has saved today on the server host, in the CLI status line's terms. It takes the
++ * free space between the limit meters and the turn stats and sits in the middle of it.
++ */
++export function RtkSavingsChip({ savings }: { savings: RtkSavings }) {
++  return (
++    <span className="flex flex-1 justify-center">
++      <Tooltip>
++        <TooltipTrigger
++          render={<span tabIndex={0} className="inline-flex items-center gap-1 rounded-sm" />}
++        >
++          <Label>RTK</Label>
++          <Value>{`-${formatRtkSavedTokens(savings.savedTokens)}`}</Value>
++          <Label>{`(${formatRtkPercent(savings.savingsPercent)})`}</Label>
++        </TooltipTrigger>
++        <TooltipPopup>{formatRtkSavingsDetail(savings)}</TooltipPopup>
++      </Tooltip>
++    </span>
++  );
++}
++
+ export function ComposerStats({
+   context,
+   turn,
+   compactions,
+   usageLimits,
++  environmentId,
+ }: {
+   context: ContextWindowSnapshot | null;
+   turn: OrchestrationV2ProviderTurn | null;
+   compactions: ReadonlyArray<Extract<OrchestrationV2TurnItem, { type: "compaction" }>>;
+   usageLimits: { limits: ServerProviderUsageLimits; providerName: string } | null;
++  environmentId: EnvironmentId;
+ }) {
++  // Read here rather than in ChatView, so the once-a-minute refresh re-renders only the stats line.
++  const rtkSavings = useRtkSavings(environmentId);
+   const responseRate = deriveResponseRate(turn);
+   const estimated = turn?.responseThroughput?.basis === "codex_active_windows_estimate";
+   const usage = turn?.turnTokenUsage;
+@@ -301,7 +332,8 @@ export function ComposerStats({
+     !hasTokens &&
+     responseRate === null &&
+     compactions.length === 0 &&
+-    selectComposerLimitWindows(usageLimits?.limits).length === 0
++    selectComposerLimitWindows(usageLimits?.limits).length === 0 &&
++    rtkSavings === null
+   )
+     return null;
+   const count = (value: number | undefined) =>
+@@ -522,6 +554,7 @@ export function ComposerStats({
+       {usageLimits && (
+         <UsageLimitsSummary limits={usageLimits.limits} providerName={usageLimits.providerName} />
+       )}
++      {rtkSavings !== null && <RtkSavingsChip savings={rtkSavings} />}
+       {stats.length > 0 && (
+         <span className="ms-auto inline-flex flex-wrap items-center gap-x-2.5">
+           {stats.map(({ key, node }, index) => (
+diff --git a/apps/web/src/state/rtkSavings.ts b/apps/web/src/state/rtkSavings.ts
+new file mode 100644
+index 0000000000..5ee95cbcee
+--- /dev/null
++++ b/apps/web/src/state/rtkSavings.ts
+@@ -0,0 +1,30 @@
++import {
++  createEnvironmentRpcQueryAtomFamily,
++  selectEnvironmentQueryData,
++} from "@t3tools/client-runtime/state/runtime";
++import { WS_METHODS, type EnvironmentId, type RtkSavings } from "@t3tools/contracts";
++
++import { connectionAtomRuntime } from "../connection/runtime";
++import { useEnvironmentQuerySelector } from "./query";
++
++const REFRESH_MS = 60_000;
++
++/** RTK's savings on an environment's host, re-read once a minute for as long as a stats line keeps the query alive. */
++const rtkSavingsAtom = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
++  label: "environment-data:server:rtk-savings",
++  tag: WS_METHODS.serverGetRtkSavings,
++  staleTimeMs: REFRESH_MS,
++  refreshIntervalMs: REFRESH_MS,
++});
++
++/**
++ * Null until a value arrives (still loading, or the request failed, as it does on a server
++ * that predates the RPC) and when the host has no RTK or saved nothing today. The stats line
++ * shows no RTK part then. Polling rebuilds unchanged results, so only the data is selected.
++ */
++export function useRtkSavings(environmentId: EnvironmentId): RtkSavings | null {
++  return useEnvironmentQuerySelector(
++    rtkSavingsAtom({ environmentId, input: {} }),
++    selectEnvironmentQueryData,
++  );
++}
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index e61597e52e..d5fe8c607b 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -64,6 +64,7 @@ export * from "./usage.ts";
+ export * from "./scheduledTask.ts";
+ export * from "./worktreeMcp.ts";
+ export * from "./resourceTelemetry.ts";
++export * from "./rtkSavings.ts";
+ export * from "./rpc.ts";
+ export * from "./worktreeSetup.ts";
+ export * from "./secretRequest.ts";
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index e4823f3027..c0ba427ecb 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -339,6 +339,7 @@ import {
+   ProviderConsumeResetCreditInput,
+   ProviderConsumeResetCreditResult,
+ } from "./providerUsageLimits.ts";
++import { RtkSavings } from "./rtkSavings.ts";
+ import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+ import {
+   StorageCleanupReport,
+@@ -520,6 +521,7 @@ export const WS_METHODS = {
+   serverReportClientActivity: "server.reportClientActivity",
+   serverGetUsageSummary: "server.getUsageSummary",
+   serverRefreshUsageRates: "server.refreshUsageRates",
++  serverGetRtkSavings: "server.getRtkSavings",
+ 
+   scheduledTasksSubscribe: "scheduledTasks.subscribe",
+   scheduledTasksUpsert: "scheduledTasks.upsert",
+@@ -943,6 +945,12 @@ const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates
+   error: EnvironmentAuthorizationError,
+ });
+ 
++const WsServerGetRtkSavingsRpc = Rpc.make(WS_METHODS.serverGetRtkSavings, {
++  payload: Schema.Struct({}),
++  success: Schema.NullOr(RtkSavings),
++  error: EnvironmentAuthorizationError,
++});
++
+ const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
+   payload: ServerSignalProcessInput,
+   success: ServerSignalProcessResult,
+@@ -1968,6 +1976,7 @@ export const WsRpcGroup = RpcGroup.make(
+   WsServerPrepareTriageRpc,
+   WsServerGetUsageSummaryRpc,
+   WsServerRefreshUsageRatesRpc,
++  WsServerGetRtkSavingsRpc,
+   WsServerSignalProcessRpc,
+   WsScheduledTasksSubscribeRpc,
+   WsScheduledTasksUpsertRpc,
+diff --git a/packages/contracts/src/rtkSavings.test.ts b/packages/contracts/src/rtkSavings.test.ts
+new file mode 100644
+index 0000000000..482cefdf39
+--- /dev/null
++++ b/packages/contracts/src/rtkSavings.test.ts
+@@ -0,0 +1,34 @@
++import * as Schema from "effect/Schema";
++import { describe, expect, it } from "vite-plus/test";
++
++import { RtkSavings } from "./rtkSavings.ts";
++
++const decodeRtkSavings = Schema.decodeSync(RtkSavings);
++
++const sample = {
++  date: "2026-10-28",
++  commands: 39,
++  savedTokens: 1380,
++  savingsPercent: 12.2,
++  totalSavedTokens: 2_159_103,
++};
++
++describe("RtkSavings", () => {
++  it("decodes one day of savings", () => {
++    expect(decodeRtkSavings(sample)).toEqual(sample);
++  });
++
++  it("decodes savings without an all-time total", () => {
++    const { totalSavedTokens: _total, ...withoutTotal } = sample;
++    expect(decodeRtkSavings(withoutTotal)).toEqual(withoutTotal);
++  });
++
++  it.each([
++    ["negative saved tokens", { ...sample, savedTokens: -1 }],
++    ["fractional saved tokens", { ...sample, savedTokens: 1.5 }],
++    ["a percentage above 100", { ...sample, savingsPercent: 100.5 }],
++    ["a blank date", { ...sample, date: " " }],
++  ])("rejects %s", (_name, value) => {
++    expect(() => decodeRtkSavings(value)).toThrow();
++  });
++});
+diff --git a/packages/contracts/src/rtkSavings.ts b/packages/contracts/src/rtkSavings.ts
+new file mode 100644
+index 0000000000..31a2b6bfca
+--- /dev/null
++++ b/packages/contracts/src/rtkSavings.ts
+@@ -0,0 +1,19 @@
++import * as Schema from "effect/Schema";
++
++import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
++
++/**
++ * What RTK, the local CLI output compressor, saved on the server host today.
++ * The server reads it from `rtk gain`, so it covers every agent session on that host.
++ */
++export const RtkSavings = Schema.Struct({
++  /** Host-local calendar day the figures belong to, as YYYY-MM-DD. */
++  date: TrimmedNonEmptyString,
++  commands: NonNegativeInt,
++  savedTokens: NonNegativeInt,
++  /** Share of the day's raw output tokens that RTK removed. */
++  savingsPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
++  /** Everything RTK has saved on this host since it began recording; absent when RTK does not report it. */
++  totalSavedTokens: Schema.optional(NonNegativeInt),
++});
++export type RtkSavings = typeof RtkSavings.Type;

@@ -16,7 +16,11 @@
     "packages/provider-core/src/server/managedProvider.test.ts",
     "apps/server/src/provider/ClaudeCapabilitiesProbe.test.ts",
     "apps/web/src/lib/contextWindow.test.ts",
-    "apps/server/src/provider/codexUsageLimits.test.ts"
+    "apps/server/src/provider/codexUsageLimits.test.ts",
+    "apps/server/src/rtk/RtkSavings.test.ts",
+    "apps/server/src/auth/RpcAuthorization.test.ts",
+    "packages/contracts/src/rtkSavings.test.ts",
+    "apps/web/src/components/chat/ComposerStats.test.tsx"
   ],
   "typecheck": [
     "apps/server",
